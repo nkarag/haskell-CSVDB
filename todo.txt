@@ -1,0 +1,71 @@
+-- OPEN (Not Started)
+
+<<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
+				We must be able to pattern match on these commands. Basically we need the following functions:
+
+					parseCommand :: Text -> Command -- Parse user input (Text) and trasnfrom it into a structured Command data type
+					parsePredicate :: Text -> Predicate  -- Parse user input (Text) and transform it into a structured Predicate data type
+															 -- a predicate is an expression of filter and/or join predicates connected by Logical Operations
+
+					cmdToEtlMap :: Command -> ETLMapping  -- Transform the Command to an ETLMapping that is ready to be executed and yield final result (an RTable)
+
+				Also we will need basic Input / Output functions for the corresponding input/output commands like the following:
+
+					importCSV :: Command -> RTable
+					listCSV :: RTable  -> IO()
+					exportCSV :: RTable -> IO()
+
+<<<20170427		implement 
+					* GroupBy and 
+					* Dedublicate and 
+					* Merge operations 
+				with Data.List groupby and nubby functions
+
+<<<20170421		Check SQL parser at: http://jakewheat.github.io/simple-sql-parser/latest/
+
+
+-- IN PROGRESS
+
+<<<20170505		csvToRTable must include "empty column logic" i.e., turn ",," "^," ",$" to a Null RDataType in the corresponding RTuple
+
+<<<20170505		Implement Left and Right Outer Joins
+
+
+-- COMPLETED
+
+<<<20170328		Run some tests to test relational operations (filter OK, projection OK, join OK, union OK, intersection OK, difference OK) and 
+				ETLMappings : 
+					add new columns (RMap1x1) OK, 
+					change existing column names (RMap1x1) OK, 
+					value transformations (RMap1x1) OK, 
+					RMapNx1 OK
+					RMap1xN OK
+					RMapNxM OK
+20170421>>>> (Completion)
+
+
+<<<20170315		implement the ETLMapping concept and the function runETLmapping - DONE
+							runUnaryETLOperation - DONE
+							runBinaryETLOperation - DONE
+							runUnaryROperation - DONE
+							runBinaryROperation - DONE
+							runInnerJoin - DONE
+20170328>>>> (Completion)
+
+<<<20170313	Implement  concept of fixed column-order per RTuple with a HashMap ColOrder ColumnName, where type ColOrder = Int. This triggers changes in the following:
+				- RTupleMData
+				- ColumnInfo
+				- createRTableMData
+				- csvToRTable
+				- RTableToCSV
+20170314>>> (Completion)
+
+<<<20170307	type RTupleMData =   HM.HashMap ColumnName ColumnInfo --> it does not keep the column order specified when we call RTable.createRTableMData, we need to change HashMap to a List, 				Also fix bug in rtableToCSV so as in the list [(ColumnInfo, RDataType)] the columns correpsonf to the approproate RDataTypes 
+			
+20170307>>> (Completion)
+
+<<<20170306	Change RDate to hold each date component separately (year, month, day, hour, min, sec) and make it an instance of Eq and Ord, so that you can order RDates 
+20170306>>> (Completion)
+
+<<<20170303	Change rtableToCSV to also write the Header in the first line, based on table metadata
+20170306>>> (Completion)
