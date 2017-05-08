@@ -12,6 +12,7 @@ Main Features*
  - SQL interface over CSV files
  - REPL with available ETL operations and Relational Algebra Operators and SQL queries
  - Lazy evaluation of data pipelines
+ - Composition of ETL operations and Relational Algebra operations
  - Parallel processing of large CSV files
  - Notebook style GUI (e.g., like Apache Zeppelin) over CSV files
 
