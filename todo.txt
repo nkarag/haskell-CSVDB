@@ -1,3 +1,14 @@
+-- IN PROGRESS
+
+<<<20170427		implement 
+					* GroupBy and (DONE) Aggregation
+					* upsertRtuple (wrapper over HashMap.insert), singleton RTable
+					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
+
+					* Dedublicate and 
+					* Merge operations 
+				with Data.List groupby and nubby functions
+
 -- OPEN (Not Started)
 
 <<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
@@ -15,23 +26,17 @@
 					listCSV :: RTable  -> IO()
 					exportCSV :: RTable -> IO()
 
-<<<20170427		implement 
-					* GroupBy and 
-					* Dedublicate and 
-					* Merge operations 
-				with Data.List groupby and nubby functions
 
 <<<20170421		Check SQL parser at: http://jakewheat.github.io/simple-sql-parser/latest/
 
 
--- IN PROGRESS
-
-<<<20170505		csvToRTable must include "empty column logic" i.e., turn ",," "^," ",$" to a Null RDataType in the corresponding RTuple
+-- COMPLETED
 
 <<<20170505		Implement Left and Right Outer Joins
+20170509>>>> (Completion)
 
-
--- COMPLETED
+<<<20170505		csvToRTable must include "empty column logic" i.e., turn ",," "^," ",$" to a Null RDataType in the corresponding RTuple
+20170509>>>> (Completion)
 
 <<<20170328		Run some tests to test relational operations (filter OK, projection OK, join OK, union OK, intersection OK, difference OK) and 
 				ETLMappings : 

@@ -19,7 +19,7 @@ import Data.Maybe (fromJust)
 -- Text 
 import Data.Text (Text,stripSuffix, pack, unpack, append,take, takeEnd)
 
--- Test command:  stack exec -- csvdb ./misc/test.csv 8 ./misc/testo.csv
+-- Test command:  stack exec -- csvdb ./misc/test.csv 20 ./misc/testo.csv
 
 main :: IO ()
 main = do
@@ -257,7 +257,7 @@ main = do
     let
        myfilter = T.f (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"})
        myprojection = T.p ["Name","MyTime","Number", "ColNew2"]
-       myjoin = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew12
+       myjoin = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew12  -- !!! Check that the other table participating in the join is embedded in the myjoin operation
        rcombined = myprojection . myjoin . myfilter 
        rtabNew13 = T.rcomb rcombined rtab
        rtmdata13 = T.createRTableMData ( "TestTable13", 
@@ -291,6 +291,61 @@ main = do
                                        []  -- list of unique keys
         
     writeResult fo "_t14.csv" rtmdata14 rtabNew14
+
+
+-- Test Right Outer Join
+    let rtabNew15 = T.rJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew3 rtab
+        rtmdata15 = T.createRTableMData ( "TestTable15", 
+                                         [  ("Name", T.Varchar),
+                                            ("MyDate", T.Date "DD/MM/YYYY"), 
+                                            ("MyTime", T.Timestamp "DD/MM/YYYY HH24:MI:SS"), 
+                                            ("Number", T.Integer), 
+                                            ("DNumber", T.Double),
+                                            ("NewNumber", T.Integer)
+                                         ]                                       
+                                       )   
+                                       []  -- primary key
+                                       []  -- list of unique keys
+        
+    writeResult fo "_t15.csv" rtmdata15 rtabNew15
+
+
+-- Test Aggregation
+    -- 
+    let rtabNew16 = T.ragg [T.raggSum "Number" "SumNumber" 
+                            , T.raggCount "Number" "CountNumber"
+                            , T.raggAvg "Number" "AvgNumber" 
+                            , T.raggSum "Name" "SumName"
+                            ,T.raggMax "DNumber" "maxDNumber"
+                            ,T.raggMax "Number" "maxNumber"
+                            ,T.raggMax "Name" "maxName"
+                            ,T.raggMin "DNumber" "minDNumber"
+                            ,T.raggMin "Number" "minNumber"
+                            ,T.raggMin "Name" "minName"
+                            ,T.raggAvg "Name" "AvgName"
+                         ] rtabNew
+        rtmdata16 = T.createRTableMData ( "TestTable16", 
+                                         [  --("Name", T.Varchar),
+                                            --("MyDate", T.Date "DD/MM/YYYY"), 
+                                            --("MyTime", T.Timestamp "DD/MM/YYYY HH24:MI:SS"), 
+                                            ("SumNumber", T.Integer) 
+                                            ,("CountNumber", T.Integer)
+                                            ,("AvgNumber", T.Double)
+                                            ,("SumName", T.Integer) 
+                                            ,("maxDNumber", T.Double)
+                                            ,("maxNumber", T.Integer)
+                                            ,("maxName", T.Varchar)
+                                            ,("minDNumber", T.Double)
+                                            ,("minNumber", T.Integer)
+                                            ,("minName", T.Varchar)
+                                            ,("AvgName", T.Double)
+                                            --,("NewNumber", T.Integer)
+                                         ]                                       
+                                       )   
+                                       []  -- primary key
+                                       []  -- list of unique keys
+        
+    writeResult fo "_t16.csv" rtmdata16 rtabNew16
 
 
     --print csvNew2

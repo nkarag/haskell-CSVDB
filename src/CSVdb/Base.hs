@@ -267,38 +267,42 @@ csvToRTable m c =
                     where
                         column2RDataType :: ColumnInfo -> Column -> RDataType
                         column2RDataType ci col =    
-                            -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
-                            case (dtype ci) of
-                                Integer     -> RInt (val::Integer) -- (read (Data.ByteString.Char8.unpack col) :: Int)   --((read $ show val) :: Int)
-                                Varchar     -> RText $ decodeUtf8 col -- decodeUtf8 :: ByteString -> Text 
-                                Date fmt    -> RDate {   rdate = decodeUtf8 col , dtformat = fmt } --(val::T.Text)
-                                                         --getDateFormat (val::String)}
-                                Timestamp fmt -> RTime $ createRTimeStamp fmt (Data.ByteString.Char8.unpack col)  -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
-                                Double      -> RDouble (val::Double) --(read (Data.ByteString.Char8.unpack col) :: Double)  -- ((read $ show val) :: Double)
-                            where
-                            
-                                -- Use Data.Serialize for the decoding from ByteString to a known data type
-                                -- decode :: Serialize a => ByteString -> Either String a
-                                -- val = fromRight' (decode col) 
-                                {--
-                                val = case decode col of
-                                            Left  e  -> e -- you should throw an exception here!
-                                            Right v -> v
-                                --}
-                            
-                                -- use Data.Csv parsing capabilities in order to turn a Column (i.e. a Field, i.e., a ByteString)
-                                -- into a known data type.
-                                -- For this reason we are going to use : CV.parseField :: Field -> Parser a
-                                val = fromRight' $ CV.runParser $ CV.parseField col
-                                {--
-                                val = case CV.runParser $ CV.parseField col of 
-                                            Left  e  -> e -- you should throw an exception here!
-                                            Right v -> v
-                                --}
-                                {--
-                                getDateFormat :: String -> String
-                                getDateFormat _ =  "DD/MM/YYYY"-- parse and return date format                                    
-                                --}
+                            if col == BS.empty
+                                then  -- this is an empty ByteString
+                                    Null
+                                else
+                                    -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
+                                    case (dtype ci) of
+                                        Integer     -> RInt (val::Integer) -- (read (Data.ByteString.Char8.unpack col) :: Int)   --((read $ show val) :: Int)
+                                        Varchar     -> RText $ decodeUtf8 col -- decodeUtf8 :: ByteString -> Text 
+                                        Date fmt    -> RDate {   rdate = decodeUtf8 col , dtformat = fmt } --(val::T.Text)
+                                                                 --getDateFormat (val::String)}
+                                        Timestamp fmt -> RTime $ createRTimeStamp fmt (Data.ByteString.Char8.unpack col)  -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
+                                        Double      -> RDouble (val::Double) --(read (Data.ByteString.Char8.unpack col) :: Double)  -- ((read $ show val) :: Double)
+                                    where
+                                    
+                                        -- Use Data.Serialize for the decoding from ByteString to a known data type
+                                        -- decode :: Serialize a => ByteString -> Either String a
+                                        -- val = fromRight' (decode col) 
+                                        {--
+                                        val = case decode col of
+                                                    Left  e  -> e -- you should throw an exception here!
+                                                    Right v -> v
+                                        --}
+                                    
+                                        -- use Data.Csv parsing capabilities in order to turn a Column (i.e. a Field, i.e., a ByteString)
+                                        -- into a known data type.
+                                        -- For this reason we are going to use : CV.parseField :: Field -> Parser a
+                                        val = fromRight' $ CV.runParser $ CV.parseField col
+                                        {--
+                                        val = case CV.runParser $ CV.parseField col of 
+                                                    Left  e  -> e -- you should throw an exception here!
+                                                    Right v -> v
+                                        --}
+                                        {--
+                                        getDateFormat :: String -> String
+                                        getDateFormat _ =  "DD/MM/YYYY"-- parse and return date format                                    
+                                        --}
             in HM.fromList $ Prelude.zip listOfColNames listOfRDataTypes
 
 

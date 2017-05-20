@@ -37,7 +37,14 @@ module Data.RTable
         ,ColumnInfo (..)
         ,RDataType (..)
         ,ROperation (..)
+        ,RAggOperation (..)
+        ,raggSum
+        ,raggCount
+        ,raggAvg
+        ,raggMax
+        ,raggMin
         ,emptyRTable
+        ,emptyRTuple
         ,isRTabEmpty
         ,isRTupEmpty
         ,createRDataType
@@ -74,10 +81,15 @@ module Data.RTable
         --,runDiff
         ,d 
         --,runProjection
-        ,p    
+        ,p   
+        --,runAggregation
+        ,ragg
+        --,runGroupBy
+        ,rg 
         --,runCombinedROp 
         ,rcomb
         ,removeColumn
+        ,nvl
     ) where
 
 -- Data.Serialize (Cereal package)  
@@ -107,7 +119,7 @@ import qualified Data.Typeable as TB --(typeOf, Typeable)
 import qualified Data.Dynamic as D  -- https://hackage.haskell.org/package/base-4.9.1.0/docs/Data-Dynamic.html
 
 -- Data.List
-import Data.List (map, zip, elemIndex, sortOn, union, intersect, (\\), take, length)
+import Data.List (map, zip, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, foldl', foldr, foldr1, foldl')
 -- Data.Maybe
 import Data.Maybe (fromJust)
 -- Data.Char
@@ -189,16 +201,48 @@ getRTupColValue ::
     -> RDataType     -- ^ Output value
 getRTupColValue =  HM.lookupDefault Null
 
+-- | Returns the 1st parameter if this is not Null, otherwise it returns the 2nd. 
+nvl ::
+       RDataType
+    -> RDataType
+    -> RDataType 
+nvl v1 v2 = 
+    if v1 == Null
+        then v2
+        else v1
+
 
 -- newtype NumericRDT = NumericRDT { getRDataType :: RDataType } deriving (Eq, Ord, Read, Show, Num)
 
 instance Num RDataType where
     (+) (RInt i1) (RInt i2) = RInt (i1 + i2)
+    (+) (RDouble d1) (RDouble d2) = RDouble (d1 + d2)
+    (+) (RDouble d1) (RInt i2) = RDouble (d1 + fromIntegral i2)
+    (+) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 + d2)
+    (+) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
+    (+) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
+    (+) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
+    (+) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL    
+    (+) _ _ = Null
     (*) (RInt i1) (RInt i2) = RInt (i1 * i2)
+    (*) (RDouble d1) (RDouble d2) = RDouble (d1 * d2)
+    (*) (RDouble d1) (RInt i2) = RDouble (d1 * fromIntegral i2)
+    (*) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 * d2)
+    (*) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
+    (*) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
+    (*) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
+    (*) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL    
+    (*) _ _ = Null
     abs (RInt i) = RInt (abs i)
+    abs (RDouble i) = RDouble (abs i)
+    abs _ = Null
     signum (RInt i) = RInt (signum i)
+    signum (RDouble i) = RDouble (signum i)
+    signum _ = Null
     fromInteger i = RInt i
     negate (RInt i) = RInt (negate i)
+    negate (RDouble i) = RDouble (negate i)
+    negate _ = Null
 
 -- | RTimestamp data type
 data RTimestamp = RTimestampVal {
@@ -539,6 +583,17 @@ data ROperation =
     | RInJoin { jpred :: RJoinPredicate }     -- ^ Inner Join (any type of join predicate allowed)
     | RLeftJoin { jpred :: RJoinPredicate }   -- ^ Left Outer Join (any type of join predicate allowed)    
     | RRightJoin { jpred :: RJoinPredicate }  -- ^ Right Outer Join (any type of join predicate allowed)        
+    | RAggregate { aggList :: [RAggOperation] } -- Performs some aggregation operations on specific columns and returns a singleton RTable
+    | RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] } -- ^ A GroupBy operation
+                                                                                                      -- An SQL equivalent: SELECT colGrByList, aggList FROM... GROUP BY colGrByList
+                                                                                                      -- Note that compared to SQL, we can have a more generic grouping predicate (i.e.,
+                                                                                                      -- when two RTuples should belong in the same group) than just the equality of 
+                                                                                                      -- values on the common columns between two RTuples.
+                                                                                                      -- Also note, that in the case of an aggregation without grouping (equivalent to
+                                                                                                      -- a single group group by), then the grouping predicate should be: 
+                                                                                                      -- @
+                                                                                                      -- \_ _ -> True
+                                                                                                      -- @
     | RCombinedOp { rcombOp :: RTable -> RTable  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . RFilter), in the form of an RTable -> RTable function.
                                                      --  In this sense we can also include a binary operation (e.g. join), if we partially apply the join to one RTable
                                                      --  e.g., (ij jpred rtab) . (p plist) . (f pred)
@@ -550,6 +605,185 @@ data ROperation =
 -- | Definition of a Join Predicate
 type RJoinPredicate = RTuple -> RTuple -> Bool
 
+-- | Definition of a Group By Predicate
+-- It defines the condition for two RTuples to be included in the same group.
+type RGroupPredicate = RTuple -> RTuple -> Bool
+
+
+-- | This data type represents all possible aggregate operations over an RTable.
+-- Examples are : Sum, Count, Average, Min, Max but it can be any other "aggregation".
+-- The essential property of an aggregate operation is that it acts on an RTable (or on 
+-- a group of RTuples - in the case of the RGroupBy operation) and produces a single RTuple.
+-- 
+-- An aggregate operation is applied on a specific column (source column) and the aggregated result
+-- will be stored in the target column. It is important to understand that the produced aggregated RTuple 
+-- is different from the input RTuples. It is a totally new RTuple, that will consist of the 
+-- aggregated column(s) (and the grouping columns in the case of an RGroupBy).
+
+-- Also, note that following SQL semantics, an aggregate operation ignores  Null values.
+-- So for example, a SUM(column) will just ignore them and also will COUNT(column), i.e., it 
+-- will not sum or count the Nulls. If all columns are Null, then a Null will be returned.
+--
+data RAggOperation = RAggOperation {
+                         sourceCol :: ColumnName    -- ^ Source column
+                        ,targetCol :: ColumnName    -- ^ Target column
+                        ,aggFunc :: RTable -> RTuple  -- ^ here we define the aggegate function to be applied on an RTable
+                    }
+
+-- | The following are all common aggregate operations
+
+-- | The Sum aggregate operation
+raggSum :: 
+        ColumnName -- ^ source column
+    ->  ColumnName -- ^ target column
+    ->  RAggOperation
+raggSum src trg = RAggOperation {
+                 sourceCol = src
+                ,targetCol = trg                                 
+                ,aggFunc = \rtab -> createRtuple [(trg, sumFold src trg rtab)]  
+        }
+
+-- | A helper function in raggSum that implements the basic fold for sum aggregation        
+sumFold :: ColumnName -> ColumnName -> RTable -> RDataType
+sumFold src trg rtab =         
+    V.foldr' ( \rtup accValue ->                                                                     
+                    if (getRTupColValue src) rtup /= Null && accValue /= Null
+                        then
+                            (getRTupColValue src) rtup + accValue
+                        else
+                            if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                then
+                                    accValue  -- ignore Null value
+                                else
+                                    if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                        then
+                                            (getRTupColValue src) rtup + RInt 0  -- ignore so far Null agg result
+                                                                                 -- add RInt 0, so in the case of a non-numeric rtup value, the result will be a Null
+                                        else
+                                            Null -- agg of Nulls is Null
+             ) (RInt 0) rtab
+
+
+-- | The Count aggregate operation
+raggCount :: 
+        ColumnName -- ^ source column
+    ->  ColumnName -- ^ target column
+    ->  RAggOperation
+raggCount src trg = RAggOperation {
+                 sourceCol = src
+                ,targetCol = trg
+                ,aggFunc = \rtab -> createRtuple [(trg, countFold src trg rtab)]  
+        }
+
+-- | A helper function in raggCount that implements the basic fold for Count aggregation        
+countFold :: ColumnName -> ColumnName -> RTable -> RDataType
+countFold src trg rtab =         
+    V.foldr' ( \rtup accValue ->                                                                     
+                            if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                then
+                                    RInt 1 + accValue
+                                else
+                                    if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                        then
+                                            accValue  -- ignore Null value
+                                        else
+                                            if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                then
+                                                    RInt 1  -- ignore so far Null agg result
+                                                else
+                                                    Null -- agg of Nulls is Null
+             ) (RInt 0) rtab
+
+
+-- | The Average aggregate operation
+raggAvg :: 
+        ColumnName -- ^ source column
+    ->  ColumnName -- ^ target column
+    ->  RAggOperation
+raggAvg src trg = RAggOperation {
+                 sourceCol = src
+                ,targetCol = trg
+                ,aggFunc = \rtab -> createRtuple [(trg, let 
+                                                             sum = sumFold src trg rtab
+                                                             cnt =  countFold src trg rtab
+                                                        in case (sum,cnt) of
+                                                                (RInt s, RInt c) -> RDouble (fromIntegral s / fromIntegral c)
+                                                                (_, _)           -> Null
+                                                 )]  
+        }        
+
+-- | The Max aggregate operation
+raggMax :: 
+        ColumnName -- ^ source column
+    ->  ColumnName -- ^ target column
+    ->  RAggOperation
+raggMax src trg = RAggOperation {
+                 sourceCol = src
+                ,targetCol = trg
+                ,aggFunc = \rtab -> createRtuple [(trg, maxFold src trg rtab)]  
+        }        
+
+
+-- | A helper function in raggMax that implements the basic fold for Max aggregation        
+maxFold :: ColumnName -> ColumnName -> RTable -> RDataType
+maxFold src trg rtab =         
+    V.foldr' ( \rtup accValue ->         
+                                if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                    then
+                                        max ((getRTupColValue src) rtup) accValue
+                                    else
+                                        if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                            then
+                                                accValue  -- ignore Null value
+                                            else
+                                                if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                    then
+                                                        (getRTupColValue src) rtup  -- ignore so far Null agg result
+                                                    else
+                                                        Null -- agg of Nulls is Null
+             ) Null rtab
+
+
+-- | The Min aggregate operation
+raggMin :: 
+        ColumnName -- ^ source column
+    ->  ColumnName -- ^ target column
+    ->  RAggOperation
+raggMin src trg = RAggOperation {
+                 sourceCol = src
+                ,targetCol = trg
+                ,aggFunc = \rtab -> createRtuple [(trg, minFold src trg rtab)]  
+        }        
+
+-- | A helper function in raggMin that implements the basic fold for Min aggregation        
+minFold :: ColumnName -> ColumnName -> RTable -> RDataType
+minFold src trg rtab =         
+    V.foldr' ( \rtup accValue ->         
+                                if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                    then
+                                        min ((getRTupColValue src) rtup) accValue
+                                    else
+                                        if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                            then
+                                                accValue  -- ignore Null value
+                                            else
+                                                if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                    then
+                                                        (getRTupColValue src) rtup  -- ignore so far Null agg result
+                                                    else
+                                                        Null -- agg of Nulls is Null
+             ) Null rtab
+
+{--
+data RAggOperation = 
+          RSum ColumnName  -- ^  sums values in the specific column
+        | RCount ColumnName -- ^ count of values in the specific column
+        | RCountDist ColumnName -- ^ distinct count of values in the specific column
+        | RAvg ColumnName  -- ^ average of values in the specific column
+        | RMin ColumnName -- ^ minimum of values in the specific column
+        | RMax ColumnName -- ^ maximum of values in the specific column
+--}
+
 -- | ropU operator executes a unary ROperation
 ropU = runUnaryROperation
 
@@ -560,9 +794,11 @@ runUnaryROperation ::
     -> RTable  -- ^ output RTable
 runUnaryROperation rop irtab = 
     case rop of
-        RFilter { fpred = rpredicate } ->  runRfilter rpredicate irtab
-        RPrj { colPrjList = colNames } ->  runProjection colNames irtab
-        RCombinedOp { rcombOp = comb } ->  runCombinedROp comb irtab 
+        RFilter { fpred = rpredicate }                                                  ->  runRfilter rpredicate irtab
+        RPrj { colPrjList = colNames }                                                  ->  runProjection colNames irtab
+        RAggregate { aggList = aggFunctions }                                           ->  runAggregation aggFunctions irtab
+        RGroupBy  { gpred = groupingpred, aggList = aggFunctions, colGrByList = cols }  ->  runGroupBy groupingpred aggFunctions cols irtab
+        RCombinedOp { rcombOp = comb }                                                  ->  runCombinedROp comb irtab 
 
 
 -- | ropB operator executes a binary ROperation
@@ -598,12 +834,24 @@ isRTupEmpty = HM.null
 emptyRTable :: RTable
 emptyRTable = V.empty :: RTable
 
+-- | Creates an empty RTuple (i.e., one with no column,value mappings)
+emptyRTuple :: RTuple 
+emptyRTuple = HM.empty
+
+
+-- | Creates an RTable with a single RTuple
+createSingletonRTable ::
+       RTuple 
+    -> RTable 
+createSingletonRTable rt = V.singleton rt
 
 -- | createRTuple: Create an Rtuple from a list of column names and values
 createRtuple ::
       [(ColumnName, RDataType)]  -- ^ input list of (columnname,value) pairs
     -> RTuple 
 createRtuple l = HM.fromList l
+
+
 
 -- | Creates a Null RTuple based on a list of input Column Names.
 -- A Null RTuple is an RTuple where all column names correspond to a Null value (Null is a data constructor of RDataType)
@@ -683,8 +931,8 @@ iJ = runInnerJoin
 
 -- | Implements an Inner Join operation between two RTables (any type of join predicate is allowed)
 -- Note that this operation is implemented as a 'Data.HashMap.Strict' union, which means "the first 
--- Map (i.e., RTuple) will be prefered when dublicate keys encountered" that is, in the context of 
--- joining two RTuples the value of the first RTuple on the common key will be prefered.
+-- Map (i.e., the left RTuple) will be prefered when dublicate keys encountered with different values. That is, in the context of 
+-- joining two RTuples the value of the first (i.e., left) RTuple on the common key will be prefered.
 runInnerJoin ::
     RJoinPredicate
     -> RTable
@@ -703,10 +951,10 @@ runInnerJoin jpred irtab1 irtab2 =  do
 -- | RTable Left Outer Join Operator
 lJ = runLeftJoin
 
--- | Implements a Left Outer Join operation between two RTables (any type of join predicate is allowed)
--- Note that this operation is implemented as a 'Data.HashMap.Strict' union, which means "the first 
--- Map (i.e., RTuple) will be prefered when dublicate keys encountered" that is, in the context of 
--- joining two RTuples the value of the first RTuple on the common key will be prefered.
+-- | Implements a Left Outer Join operation between two RTables (any type of join predicate is allowed),
+-- i.e., the rows of the left RTable will be preserved.
+-- Note that when dublicate keys encountered that is, since the underlying structure for an RTuple is a Data.HashMap.Strict,
+-- only one value per key is allowed. So in the context of joining two RTuples the value of the left RTuple on the common key will be prefered.
 runLeftJoin ::
     RJoinPredicate
     -> RTable
@@ -726,15 +974,23 @@ runLeftJoin jpred leftRTab rtab = do
 rJ = runRightJoin
 
 -- | Implements a Right Outer Join operation between two RTables (any type of join predicate is allowed)
--- Note that this operation is implemented as a 'Data.HashMap.Strict' union, which means "the first 
--- Map (i.e., RTuple) will be prefered when dublicate keys encountered" that is, in the context of 
--- joining two RTuples the value of the first RTuple on the common key will be prefered.
+-- i.e., the rows of the right RTable will be preserved.
+-- Note that when dublicate keys encountered that is, since the underlying structure for an RTuple is a Data.HashMap.Strict,
+-- only one value per key is allowed. So in the context of joining two RTuples the value of the right RTuple on the common key will be prefered.
 runRightJoin ::
     RJoinPredicate
     -> RTable
     -> RTable
     -> RTable
-runRightJoin jpred irtab1 irtab2 = undefined
+runRightJoin jpred rtab rightRTab = do
+    rtupRight <- rightRTab
+    rtup <- rtab
+    let targetRtuple = 
+            if (jpred rtup rtupRight)
+            then HM.union rtupRight rtup
+            else HM.union rtupRight (createNullRTuple colNamesList)
+                    where colNamesList = HM.keys rtup
+    return targetRtuple
 
 -- | RTable Union Operator
 u = runUnion
@@ -778,6 +1034,111 @@ runDiff rt1 rt2 =
         ls2 = V.toList rt2
         resultLs = ls1 Data.List.\\ ls2
     in  V.fromList resultLs
+
+
+ragg = runAggregation
+
+-- | Implements the aggregation operation on an RTable
+-- It aggregates the specific columns in each AggOperation and returns a singleton RTable 
+-- i.e., an RTable with a single RTuple that includes only the agg columns and their aggregated value.
+runAggregation ::
+        [RAggOperation]  -- ^ Input Aggregate Operations
+    ->  RTable          -- ^ Input RTable
+    ->  RTable          -- ^ Output singleton RTable
+runAggregation [] rtab = rtab
+runAggregation aggOps rtab =          
+    if isRTabEmpty rtab
+        then emptyRTable
+        else
+            createSingletonRTable (getResultRTuple aggOps rtab)
+            where
+                -- creates the final aggregated RTuple by applying all agg operations in the list
+                -- and UNIONs all the intermediate agg RTuples to a final aggregated Rtuple
+                getResultRTuple :: [RAggOperation] -> RTable -> RTuple
+                getResultRTuple [] _ = emptyRTuple
+                getResultRTuple (agg:aggs) rt =                    
+                    let RAggOperation { sourceCol = src, targetCol = trg, aggFunc = aggf } = agg                        
+                    in (getResultRTuple aggs rt) `HM.union` (aggf rt)   -- (aggf rt) `HM.union` (getResultRTuple aggs rt) 
+{--
+runAggregation ::
+        [RAggOperation]  -- ^ Input Aggregate Operations
+    ->  RTable          -- ^ Input RTable
+    ->  RTable          -- ^ Output singleton RTable
+runAggregation aggOps rtab = do --undefined     
+    rtup <- rtab
+    if isRTabEmpty rtab
+        then emptyRTable
+        else
+            return $ V.foldr1' (getAggregator aggOps rtup) rtab  -- foldr1' :: (a -> a -> a) -> Vector a -> a
+            where
+                -- We need an aggregator function of the form :: RTuple -> RTuple -> RTuple 
+                -- that knows how to perform the appropriate agg function to the corresponding column of the RTuple
+                -- (note that each RAggOperation in the [RAggOperation] list might correspond to a different column)
+
+                -- From the list of RAggOperations and an input RTuple, return an aggregator function to be used in the fold applied to the RTable (i.e. a Vector of RTuples) above
+                getAggregator :: [RAggOperation] -> RTuple -> (RTuple -> RTuple -> RTuple)
+                getAggregator [] rt = \tup acctup -> acctup  -- just return the accumulator rtuple wihtout aggregating
+                getAggregator (h:rest) rt = 
+                    --let listOfFunctions = 
+                            case h of
+                                RSum col    ->   (\tup acctup -> HM.insert col ((getRTupColValue col) tup + (getRTupColValue col) acctup) rt) `compose` (getAggregator rest rt)
+                                --RSum col    ->   (\tup acctup -> HM.insert col ((getRTupColValue col) tup + (getRTupColValue col) acctup) rt) : [getAggregator rest rt]
+                                                
+
+                    -- return the combined function from the list
+                    --in  Data.List.foldr (compose) (\tup acctup -> acctup) listOfFunctions   -- input to foldr is a list of functions :: [RTuple -> RTuple -> RTuple]
+                                                                                            -- and we want to produce a single function of the form :: RTuple -> RTuple -> RTuple
+                            where   compose :: (RTuple -> RTuple -> RTuple) -> (RTuple -> RTuple -> RTuple) -> (RTuple -> RTuple -> RTuple)
+                                    --                   element                        accumulator                    new accumulator
+                                    -- "f after accf" : 
+                                    -- accf applies the aggregation between the input rtuple (tup) and the accumulator rtuple (acctup)
+                                    -- then f is applied to the result of facc (which comes from the accumulator side)
+                                    --   Eg., assume:   RTable =    col A, col B
+                                    --                    tup1          5       20
+                                    --                    acctup       10        6
+                                    --   lets assume that  [aggOps] = [sum (a), sum (b)]
+                                    --   then :
+                                    --      compose = \t a ->  (sum on B (5,20) (10,6) =  26 )
+                                    compose f accf = \tup acctup -> f tup (accf tup acctup)  -- HM.union (f tup acctup)  (accf tup acctup) 
+
+--}
+
+rg = runGroupBy
+
+-- RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] }
+
+-- hint: use Data.List.GroupBy for the grouping and Data.List.foldl' for the aggregation in each group
+{--type RGroupPredicate = RTuple -> RTuple -> Bool
+
+data RAggOperation = 
+          RSum ColumnName  -- ^  sums values in the specific column
+        | RCount ColumnName -- ^ count of values in the specific column
+        | RCountDist ColumnName -- ^ distinct count of values in the specific column
+        | RAvg ColumnName  -- ^ average of values in the specific column
+        | RMin ColumnName -- ^ minimum of values in the specific column
+        | RMax ColumnName
+--}
+
+-- | Implements the GROUP BY operation over an RTable.
+runGroupBy ::
+       RGroupPredicate   -- ^ Grouping predicate, in order to form the groups of RTuples (it defines when two RTuples should be included in the same group)
+    -> [RAggOperation]   -- ^ Aggregations to be applied on specific columns
+    -> [ColumnName]      -- ^ List of grouping column names (GROUP BY clause in SQL)
+                         --   We assume that all RTuples in the same group have the same value in these columns
+    -> RTable            -- ^ input RTable
+    -> RTable            -- ^ output RTable
+runGroupBy gpred aggOps cols rtab = undefined 
+{--
+    let rtupList = V.toList rtab
+        -- form the groups of RTuples
+        listOfRTupSubLists = Data.List.groupBy gpred rtupList
+        -- get column values in each sublist
+        listOfColValSubLists = map (map (getRTupColValue colname)) listOfRTupLists
+        -- Do the aggregation required in each group
+        map (foldl' (+) 0) listOfColValSubLists 
+--}
+
+
 
 rcomb = runCombinedROp
 
