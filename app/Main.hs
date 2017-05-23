@@ -18,6 +18,10 @@ import Data.HashMap.Strict ((!))
 import Data.Maybe (fromJust)
 -- Text 
 import Data.Text (Text,stripSuffix, pack, unpack, append,take, takeEnd)
+-- Vector
+import Data.Vector (toList)
+-- List
+import Data.List (groupBy)
 
 -- Test command:  stack exec -- csvdb ./misc/test.csv 20 ./misc/testo.csv
 
@@ -259,7 +263,7 @@ main = do
        myprojection = T.p ["Name","MyTime","Number", "ColNew2"]
        myjoin = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew12  -- !!! Check that the other table participating in the join is embedded in the myjoin operation
        rcombined = myprojection . myjoin . myfilter 
-       rtabNew13 = T.rcomb rcombined rtab
+       rtabNew13 = T.rComb rcombined rtab
        rtmdata13 = T.createRTableMData ( "TestTable13", 
                                 [   ("Name", T.Varchar)
                                     --,("MyDate", T.Date "DD/MM/YYYY")
@@ -346,6 +350,55 @@ main = do
                                        []  -- list of unique keys
         
     writeResult fo "_t16.csv" rtmdata16 rtabNew16
+
+
+-- Test GroupBy
+    -- 
+    let rtabNew17 = T.rG    (\t1 t2 ->  t1!"Name" == t2!"Name" && t1!"MyTime" == t2!"MyTime")  
+                            [   T.raggSum "Number" "SumNumber" 
+                                , T.raggCount "Name" "CountName"
+                                -- , T.raggAvg "Number" "AvgNumber" 
+                                , T.raggSum "Name" "SumName"
+                                , T.raggCount "DNumber" "CountDNumber"
+                                , T.raggMax "DNumber" "maxDNumber"
+                                -- ,T.raggMax "Number" "maxNumber"
+                                , T.raggMax "Name" "maxName"
+                                -- ,T.raggMin "DNumber" "minDNumber"
+                                -- ,T.raggMin "Number" "minNumber"
+                                -- ,T.raggMin "Name" "minName"
+                                -- ,T.raggAvg "Name" "AvgName"
+                             ] 
+                             ["Name", "MyTime"]
+                             rtabNew
+
+        -- debugging
+--        rtupList = toList rtabNew 
+--        listOfRTupGroupLists = Data.List.groupBy (\t1 t2 ->  t1!"Name" == t2!"Name") rtupList
+
+        rtmdata17 = T.createRTableMData ( "TestTable17", 
+                                         [  ("Name", T.Varchar)
+                                            --,("MyDate", T.Date "DD/MM/YYYY"), 
+                                            ,("MyTime", T.Timestamp "DD/MM/YYYY HH24:MI:SS")
+                                            ,("SumNumber", T.Integer) 
+                                            ,("CountName", T.Integer)
+                                            -- ,("AvgNumber", T.Double)
+                                            ,("SumName", T.Integer) 
+                                            ,("CountDNumber", T.Integer)
+                                            ,("maxDNumber", T.Double)
+                                            -- ,("maxNumber", T.Integer)
+                                            ,("maxName", T.Varchar)
+                                            -- ,("minDNumber", T.Double)
+                                            -- ,("minNumber", T.Integer)
+                                            -- ,("minName", T.Varchar)
+                                            -- ,("AvgName", T.Double)
+                                            --,("NewNumber", T.Integer)
+                                         ]                                       
+                                       )   
+                                       []  -- primary key
+                                       []  -- list of unique keys
+    
+  --  print listOfRTupGroupLists
+    writeResult fo "_t17.csv" rtmdata17 rtabNew17
 
 
     --print csvNew2

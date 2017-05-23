@@ -1,7 +1,7 @@
 -- IN PROGRESS
 
 <<<20170427		implement 
-					* GroupBy and (DONE) Aggregation
+					* (DONE) GroupBy and (DONE) Aggregation
 					* upsertRtuple (wrapper over HashMap.insert), singleton RTable
 					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
 

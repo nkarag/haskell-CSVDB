@@ -85,9 +85,9 @@ module Data.RTable
         --,runAggregation
         ,ragg
         --,runGroupBy
-        ,rg 
+        ,rG 
         --,runCombinedROp 
-        ,rcomb
+        ,rComb
         ,removeColumn
         ,nvl
     ) where
@@ -119,7 +119,7 @@ import qualified Data.Typeable as TB --(typeOf, Typeable)
 import qualified Data.Dynamic as D  -- https://hackage.haskell.org/package/base-4.9.1.0/docs/Data-Dynamic.html
 
 -- Data.List
-import Data.List (map, zip, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, foldl', foldr, foldr1, foldl')
+import Data.List (map, zip, zipWith, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, sortBy, foldl', foldr, foldr1, foldl',head)
 -- Data.Maybe
 import Data.Maybe (fromJust)
 -- Data.Char
@@ -659,9 +659,10 @@ sumFold src trg rtab =
                                         then
                                             (getRTupColValue src) rtup + RInt 0  -- ignore so far Null agg result
                                                                                  -- add RInt 0, so in the case of a non-numeric rtup value, the result will be a Null
+                                                                                 -- while if rtup value is numeric the addition of RInt 0 does not cause a problem
                                         else
                                             Null -- agg of Nulls is Null
-             ) (RInt 0) rtab
+             ) (Null) rtab
 
 
 -- | The Count aggregate operation
@@ -692,7 +693,7 @@ countFold src trg rtab =
                                                     RInt 1  -- ignore so far Null agg result
                                                 else
                                                     Null -- agg of Nulls is Null
-             ) (RInt 0) rtab
+             ) (Null) rtab
 
 
 -- | The Average aggregate operation
@@ -1059,51 +1060,8 @@ runAggregation aggOps rtab =
                 getResultRTuple (agg:aggs) rt =                    
                     let RAggOperation { sourceCol = src, targetCol = trg, aggFunc = aggf } = agg                        
                     in (getResultRTuple aggs rt) `HM.union` (aggf rt)   -- (aggf rt) `HM.union` (getResultRTuple aggs rt) 
-{--
-runAggregation ::
-        [RAggOperation]  -- ^ Input Aggregate Operations
-    ->  RTable          -- ^ Input RTable
-    ->  RTable          -- ^ Output singleton RTable
-runAggregation aggOps rtab = do --undefined     
-    rtup <- rtab
-    if isRTabEmpty rtab
-        then emptyRTable
-        else
-            return $ V.foldr1' (getAggregator aggOps rtup) rtab  -- foldr1' :: (a -> a -> a) -> Vector a -> a
-            where
-                -- We need an aggregator function of the form :: RTuple -> RTuple -> RTuple 
-                -- that knows how to perform the appropriate agg function to the corresponding column of the RTuple
-                -- (note that each RAggOperation in the [RAggOperation] list might correspond to a different column)
 
-                -- From the list of RAggOperations and an input RTuple, return an aggregator function to be used in the fold applied to the RTable (i.e. a Vector of RTuples) above
-                getAggregator :: [RAggOperation] -> RTuple -> (RTuple -> RTuple -> RTuple)
-                getAggregator [] rt = \tup acctup -> acctup  -- just return the accumulator rtuple wihtout aggregating
-                getAggregator (h:rest) rt = 
-                    --let listOfFunctions = 
-                            case h of
-                                RSum col    ->   (\tup acctup -> HM.insert col ((getRTupColValue col) tup + (getRTupColValue col) acctup) rt) `compose` (getAggregator rest rt)
-                                --RSum col    ->   (\tup acctup -> HM.insert col ((getRTupColValue col) tup + (getRTupColValue col) acctup) rt) : [getAggregator rest rt]
-                                                
-
-                    -- return the combined function from the list
-                    --in  Data.List.foldr (compose) (\tup acctup -> acctup) listOfFunctions   -- input to foldr is a list of functions :: [RTuple -> RTuple -> RTuple]
-                                                                                            -- and we want to produce a single function of the form :: RTuple -> RTuple -> RTuple
-                            where   compose :: (RTuple -> RTuple -> RTuple) -> (RTuple -> RTuple -> RTuple) -> (RTuple -> RTuple -> RTuple)
-                                    --                   element                        accumulator                    new accumulator
-                                    -- "f after accf" : 
-                                    -- accf applies the aggregation between the input rtuple (tup) and the accumulator rtuple (acctup)
-                                    -- then f is applied to the result of facc (which comes from the accumulator side)
-                                    --   Eg., assume:   RTable =    col A, col B
-                                    --                    tup1          5       20
-                                    --                    acctup       10        6
-                                    --   lets assume that  [aggOps] = [sum (a), sum (b)]
-                                    --   then :
-                                    --      compose = \t a ->  (sum on B (5,20) (10,6) =  26 )
-                                    compose f accf = \tup acctup -> f tup (accf tup acctup)  -- HM.union (f tup acctup)  (accf tup acctup) 
-
---}
-
-rg = runGroupBy
+rG = runGroupBy
 
 -- RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] }
 
@@ -1127,20 +1085,30 @@ runGroupBy ::
                          --   We assume that all RTuples in the same group have the same value in these columns
     -> RTable            -- ^ input RTable
     -> RTable            -- ^ output RTable
-runGroupBy gpred aggOps cols rtab = undefined 
-{--
+runGroupBy gpred aggOps cols rtab =  
     let rtupList = V.toList rtab
-        -- form the groups of RTuples
-        listOfRTupSubLists = Data.List.groupBy gpred rtupList
-        -- get column values in each sublist
-        listOfColValSubLists = map (map (getRTupColValue colname)) listOfRTupLists
-        -- Do the aggregation required in each group
-        map (foldl' (+) 0) listOfColValSubLists 
---}
+        -- 1. form the groups of RTuples
+            -- a. first sort the Rtuples based on the grouping predicate
+        listOfRTupSorted = Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (HM.toList t1) (HM.toList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+            -- b then produce the groups
+        listOfRTupGroupLists = Data.List.groupBy gpred listOfRTupSorted
+        -- 2. turn each (sub)list of Rtuples representing a Group into an RTable in order to apply aggregation
+        --    Note: each RTable in this list will hold a group of RTuples that all have the same values in the input grouping columns
+        --    (which must be compatible with the input grouping predicate)
+        listofGroupRtabs = Data.List.map (V.fromList) listOfRTupGroupLists
+        -- 3. We need to keep the values of the grouping columns (e.g., by selecting the fisrt row) from each one of these RTables,
+        --    in order to "join them" with the aggregated RTuples that will be produced by the aggregation operations
+        --    The following will produce a list of singleton RTables.
+        listOfGroupingColumnsRtabs = Data.List.map ( (restrictNrows 1) . (p cols) ) listofGroupRtabs
+        -- 4. Aggregate each group according to input and produce a list of (aggregated singleton RTables)
+        listOfAggregatedRtabs = Data.List.map (ragg aggOps) listofGroupRtabs
+        -- 5. Join the two list of singleton RTables
+        listOfFinalRtabs = Data.List.zipWith (iJ (\t1 t2 -> True)) listOfGroupingColumnsRtabs listOfAggregatedRtabs
+        -- 6. Union all individual singleton RTables into the final RTable
+    in  Data.List.foldr1 (u) listOfFinalRtabs
 
 
-
-rcomb = runCombinedROp
+rComb = runCombinedROp
 
 -- | runCombinedROp: A Higher Order function that accepts as input a combination of unary ROperations e.g.,   (p plist).(f pred)
 --   expressed in the form of a function (RTable -> Rtable) and applies this function to the input RTable.
