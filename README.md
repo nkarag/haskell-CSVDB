@@ -1,4 +1,4 @@
-**CSVDB - A "thin" Database layer over CSV files written in Haskell**
+**H.CSVDB - A "thin" Database layer over CSV files written in Haskell**
 ---------
 
 Main Features*
@@ -9,14 +9,14 @@ Main Features*
  - Relational Algebra operations over CSV files -  exposed as haskell functions
  - Perform ETL over your CSV files via the ETL mapping concept, which is exposed as a Haskell data type. 
  - **Any** type of data transformation can be easily implemented through this ETL Mapping construct
- - SQL interface over CSV files
+ - SQL interface over CSV files enhanced with a "functional" flavor
  - REPL with available ETL operations and Relational Algebra Operators and SQL queries
- - Lazy evaluation of data pipelines
- - Composition of ETL operations and Relational Algebra operations
+ - Lazy evaluation of data pipelines and data transformations
+ - Composition of ETL operations and Relational Algebra operations becomes trivial via function composition
  - Parallel processing of large CSV files
  - Notebook style GUI (e.g., like Apache Zeppelin) over CSV files
 
 -----------
-(*) CSVDB is still work in progress.
+(*) H.CSVDB is still work in progress.
 
 > Written with [StackEdit](https://stackedit.io/).
