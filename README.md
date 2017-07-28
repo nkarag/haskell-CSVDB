@@ -264,7 +264,7 @@ etl :: ETLMapping -> RTable
 
 
 -----------
-(*) H.CSVDB is still work in progress.
+(*) hCSVDB is still work in progress.
 
 > Written with [StackEdit](https://stackedit.io/).
 
