@@ -124,7 +124,7 @@ The ETLMapping data type is implemented as a binary tree where the node represen
 ```
 
 
-##Julius: An Embedded Domain Specific Language for ETL
+## Julius: An Embedded Domain Specific Language for ETL
 In order to easily define complex ETL mappings, that implement arbitrary data transformations on RTables, we have implemented an Embedded Domain Specific Language (EDSL) for this purpose, called *Julius*.
 With Julius we can express any ETL Mapping consisting of an arbitrary number of Column Mappings and Relational Algebra operations. Julius expressions are read *from bottom to top*. 
 Julius expressions when evaluated produce an ETLMapping, which can then be executed and produce the resulting RTable.
