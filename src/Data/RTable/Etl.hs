@@ -17,7 +17,7 @@ commentary with @some markup@.
 --{-# LANGUAGE OverloadedRecordFields #-}
 --{-# LANGUAGE  DuplicateRecordFields #-}
 
-module Data.RTable.Etl 
+module Data.RTable.Etl
     (
         RColMapping (..)
         --,runColMapping
@@ -29,10 +29,15 @@ module Data.RTable.Etl
         ,ETLOperation (..)
         ,etlOpU
         ,etlOpB
-        ,ETLMapping
+        ,ETLMapping (..)
         --,runETLmapping
         ,etl
-        ,rdtappend        
+        ,createLeafETLMapLD
+        ,createLeafBinETLMapLD
+        ,connectETLMapLD
+        ,rdtappend 
+        ,addSurrogateKey    
+        ,appendRTable   
     ) where 
 
 -- Data.RTable
@@ -46,6 +51,9 @@ import Data.HashMap.Strict as HM
 
 -- Data.List
 import Data.List (notElem, map, zip)
+
+-- Data.Vector
+import Data.Vector as V
 
 data YesNo = Yes | No deriving (Eq, Show)
 
@@ -139,7 +147,7 @@ runColMapping rmap rtabS =
                     -- 3. remove the original (ColumnName, Value) mappings from the RTuple (i.e., remove ColumnNames mentioned in the RColMapping from source RTuple)
                     rtupleTemp = 
                         case rmvFlag of
-                            Yes -> HM.filterWithKey (\colName _ -> notElem colName srcL) srcRtuple
+                            Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
                             No  -> srcRtuple
                     
                     -- 4. insert new ColumnName, Value mapping as the target RTuple must be
@@ -190,7 +198,7 @@ runColMapping rmap rtabS =
                     -- 3. remove the original ColumnName, Value mapping from the RTuple
                     rtupleTemp = 
                         case rmvFlag of
-                            Yes -> HM.filterWithKey (\colName _ -> notElem colName srcL) srcRtuple
+                            Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
                             No  -> srcRtuple
 
                     -- 4. insert new (ColumnName, Value) pairs to the target RTuple
@@ -341,11 +349,11 @@ data ETLOperation =  ROperation | RTabMapping RTable deriving (Eq, Show)
 --
 -- @
 --
---           final RTable result
---             / 
---         etlOp1 
---        /       \
---     rtab1   rtab2
+--                     final RTable result
+--                             / 
+--  A leaf-node -->         etlOp1 
+--                          /       \
+--                         rtab1   rtab2
 --
 -- @
 --
@@ -356,8 +364,14 @@ data ETLOperation =  ROperation | RTabMapping RTable deriving (Eq, Show)
 -- @
 --
 -- So we embed the rtab1 in a ETLMapping, which is a leaf (i.e., it has an empty prevMap), the rtab1 is in 
--- the right branch (tab2) and the ETLOperation is the EmptyColMapping, which returns its input RTable when executed.
--- We can use function 'rtabToETLMapping' for this job.
+-- the right branch (tabR) and the ETLOperation is the EmptyColMapping, which returns its input RTable when executed.
+-- We can use function 'rtabToETLMapping' for this job. So it becomes
+-- @
+-- A leaf-node -->    etlOp1    
+--                    /     \
+--   rtabToETLMapping rtab1  rtab2
+-- @
+--
 -- In this manner, a leaf-node can also be implemented like this:
 --
 -- @
@@ -399,8 +413,86 @@ instance Eq ETLMapping where
     etlMap1 == etlMap2 = 
             (etl etlMap1) == (etl etlMap2)  -- two ETLMappings are equal if the RTables resulting from their execution are equal
 
+-- | Creates a left-deep leaf ETL Mapping, of the following form:
+-- @
+--     A Left-Deep ETLOperation Tree
+-- 
+--                              final RTable result
+--                                    / 
+--                                 etlOp3 
+--                              /       \ 
+--                           etlOp2     rtab2
+--                          /      \ 
+-- A leaf-node -->    etlOp1    emptyRTab
+--                    /       \
+--              ETLMapEmpty   rtab1
+--
+-- @
+--
+createLeafETLMapLD ::
+       ETLOperation -- ^ ETL operation of this ETL mapping
+    -> RTable       -- ^ input RTable
+    -> ETLMapping   -- ^ output ETLMapping
+createLeafETLMapLD etlop rt = ETLMapLD { etlOp = etlop, tabL = ETLMapEmpty, tabR = rt}
 
--- | etl operator executes an ETLmapping
+-- | creates a Binary operation leaf node of the form:
+-- @
+--
+-- A leaf-node -->    etlOp1    
+--                    /     \
+--   rtabToETLMapping rtab1  rtab2
+-- @
+-- 
+createLeafBinETLMapLD ::
+       ETLOperation -- ^ ETL operation of this ETL mapping
+    -> RTable       -- ^ input RTable1
+    -> RTable       -- ^ input RTable2
+    -> ETLMapping   -- ^ output ETLMapping
+createLeafBinETLMapLD etlop rt1 rt2 = ETLMapLD { etlOp = etlop, tabL = rtabToETLMapping rt1, tabR = rt2}
+
+-- | Connects an ETL Mapping to a left-deep ETL Mapping tree, of the form
+-- @
+--     A Left-Deep ETLOperation Tree
+-- 
+--                              final RTable result
+--                                    / 
+--                                 etlOp3 
+--                              /       \ 
+--                           etlOp2     rtab2
+--                          /      \ 
+-- A leaf-node -->    etlOp1    emptyRTab
+--                    /       \
+--              ETLMapEmpty   rtab1
+--
+-- @
+-- Example:
+-- @
+--   -- connect a Unary ETL mapping
+--
+--                           etlOp2    
+--                          /      \ 
+--                       etlOp1    emptyRTab
+--        
+--   connectETLMapLD etlOp2 prevMap emptyRTable
+--
+--   -- connect a Binary ETL Mapping
+--
+--                                 etlOp3 
+--                              /       \ 
+--                           etlOp2     rtab2
+--
+--   connectETLMapLD etlOp3 prevMap rtab2
+-- @
+--
+connectETLMapLD ::
+        ETLOperation  -- ^ ETL operation of this ETL Mapping
+     -> RTable        -- ^ Right RTable (right branch) (if this is a Unary ETL mapping this should be an emptyRTable) 
+     -> ETLMapping    -- ^ Previous ETL mapping (left branch)        
+     -> ETLMapping    -- ^ New ETL Mapping, which has added at the end the new node
+connectETLMapLD etlop rt prevMap = ETLMapLD { etlOp = etlop, tabL = prevMap, tabR = rt}
+
+
+-- | This operator executes an ETLmapping
 etl = runETLmapping
 
 -- | Executes an ETLMapping
@@ -456,7 +548,8 @@ runETLmapping etlMap :=> etlOp = runETLmapping etlMap
 
 
 -- ##################################################
--- *  Various RDataType Transformations
+-- *  Various useful RDataType Transformations 
+-- *  and pre-cooked Column Mappings
 -- ##################################################
 
 -- | rtdappend : Concatenates two Text RDataTypes, in all other cases of RDataType it returns Null.
@@ -466,3 +559,67 @@ rdtappend ::
     -> RDataType
 rdtappend (RText t1) (RText t2) = RText (t1 `T.append` t2)
 rdtappend _ _ = Null
+
+
+-- | Returns an ETL Operation that adds a surrogate key (SK) column to an RTable and
+-- fills each row with a SK value.
+addSurrogateKey :: Integral a =>    
+       ColumnName    -- ^ The name of the surrogate key column
+    -> Integer       -- ^ The initial value of the Surrogate Key will be the value of this parameter    
+    -> ETLOperation  -- ^ Output ETL operation which encapsulates the add surrogate key column mapping
+addSurrogateKey cname initVal  =   
+    let combOp = RCombinedOp { rcombOp = updateSKvalue . (addColumn cname (RInt initVal))  }
+            where
+                -- updateSKvalue :: RTable -> RTable
+                -- updateSKvalue rt = V.foldr' ( \rtup trgRtab ->  let 
+                --                                                 newTuple = updateRTuple cname (rtup<!>cname + RInt 1) rtup
+                --                                         in appendRTuple newTuple trgRtab 
+                --                     ) emptyRTable rt
+                updateSKvalue :: RTable -> RTable
+                updateSKvalue rt =
+                        let     indexedRTab = V.indexed rt -- this returns a: Vector (Int, RTuple) (pairs each RTuple with its index in the RTable)
+                        in V.zipWith (\tupsrc (val, _) -> upsertRTuple cname (RInt initVal + RInt (fromIntegral val)) tupsrc ) rt indexedRTab
+    in ETLrOp combOp 
+
+-- | Returns an ETL Operation that Appends an RTable to a target RTable 
+appendRTable ::
+        ETLOperation  -- ^ Output ETL Operation
+appendRTable  = 
+    let binOp = RBinOp { rbinOp = flip (V.++) } -- we need to flip the input parameters so that when we embed this operation in an ETL mapping
+                                                -- then the delta table will be appended to the target table.
+    in ETLrOp binOp
+
+
+-- | Returns an ETL Operation that adds a surrogate key column to an RTable
+-- The first argument is the initial value of the surrogate key. If Nothing is given, then
+-- the initial value will be 0.    
+-- addSurrogateKey_old :: Integral a =>    
+--        Maybe a       -- ^ The initial value of the Surrogate Key will be the value of this parameter + 1
+--     -> a            -- ^  Number of rows that the Surrogate Key will be assigned
+--     -> ColumnName    -- ^ The name of the surrogate key column
+--     -> ETLOperation  -- ^ Output ETL operation which encapsulates the add surrogate key column mapping
+-- addSurrogateKey_old init 0 cname = 
+--     let initVal = case init of 
+--             Just x -> x
+--             Nothing -> 0
+--         cmap = RMap1x1 {   
+--                                 srcCol = "", removeSrcCol = No   -- the source column can be any column in this mapping, even ""
+--                                 ,trgCol = cname
+--                                 ,transform1x1 = \_ -> RInt (fromIntegral initVal)
+--                                 ,srcRTupleFilter = \_ -> True   
+--                        }
+--     in ETLcOp cmap
+-- addSurrogateKey_old init numRows cname = 
+--     let initVal = case init of 
+--             Just x -> x
+--             Nothing -> 0
+--         cmap = RMap1x1 {   
+--                                 srcCol = "", removeSrcCol = No   -- the source column can be any column in this mapping, even ""
+--                                 ,trgCol = cname
+--                                 ,transform1x1 = \_ -> RInt (fromIntegral initVal + 1)
+--                                 ,srcRTupleFilter = \_ -> True   
+--                        }
+--     in addSurrogateKey_old (Just (initVal + 1)) (numRows - 1) cname
+
+
+

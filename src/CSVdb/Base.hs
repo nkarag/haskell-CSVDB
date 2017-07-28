@@ -46,6 +46,7 @@ module CSVdb.Base
         --,csv2rtable        
         --,rtable2csv
         ,csvHeaderFromRtable
+        ,projectByIndex
     ) where
 {--        ,addColumn
         ,dropColumn
@@ -623,3 +624,12 @@ selectNrows n csvi =
     let rtabi = csv2rtable csvi
         rtabo = restrictNrows n rtabi
     in rtable2csv rtabo
+
+-- | Column projection on an input CSV file where 
+-- desired columns are defined by position (index)
+-- in the CSV.
+projectByIndex :: 
+             [Int]  -- ^ input list of column indexes
+          -> CSV    -- ^ input csv
+          -> CSV    -- ^ output CSV
+projectByIndex = undefined

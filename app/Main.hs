@@ -316,7 +316,7 @@ main = do
 
 -- Test Aggregation
     -- 
-    let rtabNew16 = T.ragg [T.raggSum "Number" "SumNumber" 
+    let rtabNew16 = T.rAgg [T.raggSum "Number" "SumNumber" 
                             , T.raggCount "Number" "CountNumber"
                             , T.raggAvg "Number" "AvgNumber" 
                             , T.raggSum "Name" "SumName"

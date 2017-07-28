@@ -26,7 +26,9 @@ module Data.RTable
        -- Relation(..)
         RTable (..)
         ,RTuple (..)
-        ,RPredicate (..)
+        ,RPredicate
+        ,RGroupPredicate
+        ,RJoinPredicate
         ,Name
         ,ColumnName
         ,RTableName
@@ -55,6 +57,9 @@ module Data.RTable
         ,createRTableMData
         ,createRTimeStamp
         ,getRTupColValue
+        , (<!>)
+        ,headRTup
+        ,upsertRTuple
         ,rTimeStampToRText
         ,stdTimestampFormat
         ,stdDateFormat
@@ -83,12 +88,13 @@ module Data.RTable
         --,runProjection
         ,p   
         --,runAggregation
-        ,ragg
+        ,rAgg
         --,runGroupBy
         ,rG 
         --,runCombinedROp 
         ,rComb
         ,removeColumn
+        ,addColumn
         ,nvl
     ) where
 
@@ -192,6 +198,12 @@ data RDataType =
 -- | Standard date format
 stdDateFormat = "DD/MM/YYYY"
 
+-- | Get the first RTuple from an RTable
+headRTup ::
+        RTable
+    ->  RTuple
+headRTup = V.head    
+
 
 -- | getRTupColValue :: Returns the value of an RTuple column based on the ColumnName key
 --   if the column name is not found, then it returns Null
@@ -200,6 +212,15 @@ getRTupColValue ::
     -> RTuple        -- ^ Input RTuple
     -> RDataType     -- ^ Output value
 getRTupColValue =  HM.lookupDefault Null
+
+-- | Operator for getting a column value from an RTuple
+--   if the column name is not found, then it returns Null
+(<!>) ::
+       RTuple        -- ^ Input RTuple
+    -> ColumnName    -- ^ ColumnName key
+    -> RDataType     -- ^ Output value
+(<!>) = flip getRTupColValue
+
 
 -- | Returns the 1st parameter if this is not Null, otherwise it returns the 2nd. 
 nvl ::
@@ -211,6 +232,15 @@ nvl v1 v2 =
         then v2
         else v1
 
+-- | Upsert (update/insert) an RTuple at a specific column specified by name with a value
+-- If the cname key is not found then the (columnName, value) pair is inserted. If it exists
+-- then the value is updated with the input value.
+upsertRTuple ::
+           ColumnName  -- ^ key where the upset will take place
+        -> RDataType   -- ^ new value
+        -> RTuple      -- ^ input RTuple
+        -> RTuple      -- ^ output RTuple
+upsertRTuple cname newVal tupsrc = HM.insert cname newVal tupsrc
 
 -- newtype NumericRDT = NumericRDT { getRDataType :: RDataType } deriving (Eq, Ord, Read, Show, Num)
 
@@ -424,7 +454,7 @@ toListColumnInfo ::
     -> [ColumnInfo]
 toListColumnInfo rtupmd = 
     let mapColNameColInfo = snd rtupmd
-    in Prelude.map (\cname -> mapColNameColInfo!cname) (toListColumnName rtupmd)
+    in Prelude.map (\cname -> mapColNameColInfo HM.! cname) (toListColumnName rtupmd)
 
 
 -- | toListRDataType: returns a list of RDataType values of an RTuple, in the fixed column order of the RTuple
@@ -432,7 +462,7 @@ toListRDataType ::
     RTupleMData
     -> RTuple
     -> [RDataType]
-toListRDataType rtupmd rtup = Prelude.map (\cname -> rtup!cname) (toListColumnName rtupmd)
+toListRDataType rtupmd rtup = Prelude.map (\cname -> rtup <!> cname) (toListColumnName rtupmd)
 
 
 -- | Basic metadata for a column of an RTuple
@@ -597,6 +627,9 @@ data ROperation =
     | RCombinedOp { rcombOp :: RTable -> RTable  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . RFilter), in the form of an RTable -> RTable function.
                                                      --  In this sense we can also include a binary operation (e.g. join), if we partially apply the join to one RTable
                                                      --  e.g., (ij jpred rtab) . (p plist) . (f pred)
+    | RBinOp { rbinOp :: RTable -> RTable -> RTable } -- ^ A generic binary ROperation.
+
+
  --deriving (Eq,Show)
     -- | RFieldRenaming
     -- | RAggregation
@@ -818,7 +851,8 @@ runBinaryROperation rop irtab1 irtab2 =
         RRightJoin { jpred = jpredicate } -> runRightJoin jpredicate irtab1 irtab2
         RUnion -> runUnion irtab1 irtab2
         RInter -> runIntersect irtab1 irtab2
-        RDiff  -> runDiff irtab1 irtab2         
+        RDiff  -> runDiff irtab1 irtab2  
+        RBinOp { rbinOp = bop } -> bop irtab1 irtab2      
 
 
 -- * #########  Construction ##########
@@ -888,6 +922,18 @@ removeColumn col rtabSrc = do
       srcRtup <- rtabSrc
       let targetRtup = HM.delete col srcRtup  
       return targetRtup
+
+-- | addColumn: adds a column to an RTable
+addColumn ::
+      ColumnName      -- ^ name of the column to be added
+  ->  RDataType       -- ^ Default value of the new column. All RTuples will initially have this value in this column
+  ->  RTable          -- ^ Input RTable
+  ->  RTable          -- ^ Output RTable
+addColumn name initVal rtabSrc = do
+    srcRtup <- rtabSrc
+    let targetRtup = HM.insert name initVal srcRtup
+    return targetRtup
+
 
 -- | RTable Filter operator
 f = runRfilter
@@ -1037,7 +1083,7 @@ runDiff rt1 rt2 =
     in  V.fromList resultLs
 
 
-ragg = runAggregation
+rAgg = runAggregation
 
 -- | Implements the aggregation operation on an RTable
 -- It aggregates the specific columns in each AggOperation and returns a singleton RTable 
@@ -1101,7 +1147,7 @@ runGroupBy gpred aggOps cols rtab =
         --    The following will produce a list of singleton RTables.
         listOfGroupingColumnsRtabs = Data.List.map ( (restrictNrows 1) . (p cols) ) listofGroupRtabs
         -- 4. Aggregate each group according to input and produce a list of (aggregated singleton RTables)
-        listOfAggregatedRtabs = Data.List.map (ragg aggOps) listofGroupRtabs
+        listOfAggregatedRtabs = Data.List.map (rAgg aggOps) listofGroupRtabs
         -- 5. Join the two list of singleton RTables
         listOfFinalRtabs = Data.List.zipWith (iJ (\t1 t2 -> True)) listOfGroupingColumnsRtabs listOfAggregatedRtabs
         -- 6. Union all individual singleton RTables into the final RTable
