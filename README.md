@@ -1,8 +1,8 @@
 **hCSVDB: A "thin" Database & ETL layer over CSV files written in Haskell**
 ---------
 
-#Main Features*
-
+Main Features*
+=============
  - Enables **Functional Data Management** by exposing all relational algebra operations, as well as the "**ETL Mapping**" concept (common to all ETL tools) as Haskell functions and data types.
  - Easy manipulation of your CSV files. Create any type of data transformation flows for your CSV files with ease, in the functional way haskellers love.
  - No DB-specific storage (that is why we call it a "thin" database layer). CSV files stay as-is on your disk
