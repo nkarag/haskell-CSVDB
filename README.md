@@ -54,8 +54,8 @@ C. The Inner Join operation:
 where
 `type RJoinPredicate = RTuple -> RTuple -> Bool`
 Again note, how generic a join predicate can be: *Any function* that receives to relational tuples as input and returns a Bool (indicating when these two tuples match) can play the role of our join predicate. This is much more general and powerful than SQL, where the join predicate is restricted to specific expressions.
-##ETL over RTables
-###The Column Mapping
+## ETL over RTables
+### The Column Mapping
 Apart from the typical Relational Algebra operations, we also want to "do ETL" over our CSV files, which means over our RTable abstraction. To this end, we have defined the **Column Mapping** concept. This is an arbitrary (immutable) transformation of an RTable that produces a new RTable (Target) based on a single RTable (Source). We can have:
 
 * 1x1 Column Mappings (i.e., 1 source column is mapped to 1 target column)
@@ -83,7 +83,7 @@ myTransformation [RT.RDouble amount, RT.RText debCred] =
       "D" -> [RT.RDouble (-amount)]
       "C" -> [RT.RDouble amount] 
 ```
-###The ETL Mapping
+### The ETL Mapping
 The ETLMapping data type is the equivalent of a *mapping* in an ETL tool. It consists of an arbitrary series of *ETL Operations*  (i.e., a Column Mapping or a Relational Algebra operation) that are applied in a specified order,  to one (Unary) or two (Binary) input RTable(s), in order to produce a final new RTable. This RTable will be the result of this data transformation. Each ETL Operation produces a new RTable, which becomes the input to the next ETL Operation.
 
 In terms of database operations an ETL Mapping is the equivalent of a CREATE TABLE AS SELECT (CTAS) operation in an RDBMS. This means that  anything that can be done in the SELECT part (i.e., column projection, arbitrary column expressions, row filtering, grouping and multiple join operations, etc.),  in order to produce a new table, can be included in an ETL Mapping.  
@@ -106,7 +106,7 @@ myEtlMapping =
   :-> (EtlC $ ...) -- This is Column Mapping 4
   :-> EtlMapEmpty
 ```
-#####ETL Mapping Implementation Note
+##### ETL Mapping Implementation Note
 The ETLMapping data type is implemented as a binary tree where the node represents the ETL Operation to be executed and the left branch is another  ETL Mapping, while the right branch is an RTable (that might be empty in the case of a Unary ETLOperation). Execution proceeds from bottom-left to top-right. This is similar in concept to a left-deep join tree. In a Left-Deep ETLOperation tree the "pipe" of ETLOperations comes from the left branches always.
 ```
  A Left-Deep ETLOperation Tree
