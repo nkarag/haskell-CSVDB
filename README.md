@@ -34,7 +34,8 @@ A. The  filter operation
 `runRfilter :: RPredicate -> RTable -> RTable`
 where
 `type RPredicate = RTuple -> Bool`
-Note that *any  function* with a relational tuple (RTuple data type) as input, which returns a Bool can be a predicate. This means that we can have a predicate for our WHERE clause (in SQL parlance) that can as generic as a function of this type signature can be. This is much more general and powerful than SQL, where the WHERE-clause predicate is restricted to specific expressions.
+
+Note that *any  function* with a relational tuple (RTuple data type) as input, which returns a Bool can be a predicate. This means that we can have a predicate for our WHERE clause (in SQL parlance) that can be as generic as a function of this type signature can be. This is much more general and powerful than SQL, where the WHERE-clause predicate is restricted to specific expressions.
 
 B. The projection operation
 ```
