@@ -1,8 +1,8 @@
 **hCSVDB: A "thin" Database & ETL layer over CSV files written in Haskell**
----------
+=============
 
 Main Features*
-=============
+---------
  - Enables **Functional Data Management** by exposing all relational algebra operations, as well as the "**ETL Mapping**" concept (common to all ETL tools) as Haskell functions and data types.
  - Easy manipulation of your CSV files. Create any type of data transformation flows for your CSV files with ease, in the functional way haskellers love.
  - No DB-specific storage (that is why we call it a "thin" database layer). CSV files stay as-is on your disk
@@ -18,7 +18,8 @@ Main Features*
  - Parallel processing of large CSV files.
  - Notebook style GUI (e.g., like Apache Zeppelin) over CSV files, implemented in Purescript.
 
-#The Main Idea
+The Main Idea
+---------
 
 ## The Relational Table Concept (RTable data type)
 hCSVDB implements the **Relational Table** concept. Defines all necessary data types like `RTable` and `RTuple` and all the basic relational algebra operations on RTables (filter, projection, join, set operations, group by, etc.). 
