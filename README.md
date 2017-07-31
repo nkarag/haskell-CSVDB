@@ -1,8 +1,8 @@
 **hCSVDB: A "thin" Database & ETL layer over CSV files written in Haskell**
+=============
+
+Main Features*
 ---------
-
-##Main Features*
-
  - Enables **Functional Data Management** by exposing all relational algebra operations, as well as the "**ETL Mapping**" concept (common to all ETL tools) as Haskell functions and data types.
  - Easy manipulation of your CSV files. Create any type of data transformation flows for your CSV files with ease, in the functional way haskellers love.
  - No DB-specific storage (that is why we call it a "thin" database layer). CSV files stay as-is on your disk
@@ -18,7 +18,9 @@
  - Parallel processing of large CSV files.
  - Notebook style GUI (e.g., like Apache Zeppelin) over CSV files, implemented in Purescript.
 
-#The Main Idea
+The Main Idea
+---------
+
 ## The Relational Table Concept (RTable data type)
 hCSVDB implements the **Relational Table** concept. Defines all necessary data types like `RTable` and `RTuple` and all the basic relational algebra operations on RTables (filter, projection, join, set operations, group by, etc.). 
 
@@ -32,7 +34,8 @@ A. The  filter operation
 `runRfilter :: RPredicate -> RTable -> RTable`
 where
 `type RPredicate = RTuple -> Bool`
-Note that *any  function* with a relational tuple (RTuple data type) as input, which returns a Bool can be a predicate. This means that we can have a predicate for our WHERE clause (in SQL parlance) that can as generic as a function of this type signature can be. This is much more general and powerful than SQL, where the WHERE-clause predicate is restricted to specific expressions.
+
+Note that *any  function* with a relational tuple (RTuple data type) as input, which returns a Bool can be a predicate. This means that we can have a predicate for our WHERE clause (in SQL parlance) that can be as generic as a function of this type signature can be. This is much more general and powerful than SQL, where the WHERE-clause predicate is restricted to specific expressions.
 
 B. The projection operation
 ```
@@ -52,8 +55,8 @@ C. The Inner Join operation:
 where
 `type RJoinPredicate = RTuple -> RTuple -> Bool`
 Again note, how generic a join predicate can be: *Any function* that receives to relational tuples as input and returns a Bool (indicating when these two tuples match) can play the role of our join predicate. This is much more general and powerful than SQL, where the join predicate is restricted to specific expressions.
-##ETL over RTables
-###The Column Mapping
+## ETL over RTables
+### The Column Mapping
 Apart from the typical Relational Algebra operations, we also want to "do ETL" over our CSV files, which means over our RTable abstraction. To this end, we have defined the **Column Mapping** concept. This is an arbitrary (immutable) transformation of an RTable that produces a new RTable (Target) based on a single RTable (Source). We can have:
 
 * 1x1 Column Mappings (i.e., 1 source column is mapped to 1 target column)
@@ -81,7 +84,7 @@ myTransformation [RT.RDouble amount, RT.RText debCred] =
       "D" -> [RT.RDouble (-amount)]
       "C" -> [RT.RDouble amount] 
 ```
-###The ETL Mapping
+### The ETL Mapping
 The ETLMapping data type is the equivalent of a *mapping* in an ETL tool. It consists of an arbitrary series of *ETL Operations*  (i.e., a Column Mapping or a Relational Algebra operation) that are applied in a specified order,  to one (Unary) or two (Binary) input RTable(s), in order to produce a final new RTable. This RTable will be the result of this data transformation. Each ETL Operation produces a new RTable, which becomes the input to the next ETL Operation.
 
 In terms of database operations an ETL Mapping is the equivalent of a CREATE TABLE AS SELECT (CTAS) operation in an RDBMS. This means that  anything that can be done in the SELECT part (i.e., column projection, arbitrary column expressions, row filtering, grouping and multiple join operations, etc.),  in order to produce a new table, can be included in an ETL Mapping.  
@@ -104,7 +107,7 @@ myEtlMapping =
   :-> (EtlC $ ...) -- This is Column Mapping 4
   :-> EtlMapEmpty
 ```
-#####ETL Mapping Implementation Note
+##### ETL Mapping Implementation Note
 The ETLMapping data type is implemented as a binary tree where the node represents the ETL Operation to be executed and the left branch is another  ETL Mapping, while the right branch is an RTable (that might be empty in the case of a Unary ETLOperation). Execution proceeds from bottom-left to top-right. This is similar in concept to a left-deep join tree. In a Left-Deep ETLOperation tree the "pipe" of ETLOperations comes from the left branches always.
 ```
  A Left-Deep ETLOperation Tree
@@ -121,7 +124,7 @@ The ETLMapping data type is implemented as a binary tree where the node represen
 ```
 
 
-##Julius: An Embedded Domain Specific Language for ETL
+## Julius: An Embedded Domain Specific Language for ETL
 In order to easily define complex ETL mappings, that implement arbitrary data transformations on RTables, we have implemented an Embedded Domain Specific Language (EDSL) for this purpose, called *Julius*.
 With Julius we can express any ETL Mapping consisting of an arbitrary number of Column Mappings and Relational Algebra operations. Julius expressions are read *from bottom to top*. 
 Julius expressions when evaluated produce an ETLMapping, which can then be executed and produce the resulting RTable.
@@ -262,7 +265,7 @@ etl :: ETLMapping -> RTable
 
 
 -----------
-(*) H.CSVDB is still work in progress.
+(*) hCSVDB is still work in progress.
 
 > Written with [StackEdit](https://stackedit.io/).
 
