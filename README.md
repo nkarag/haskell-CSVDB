@@ -89,7 +89,8 @@ The ETLMapping data type is the equivalent of a *mapping* in an ETL tool. It con
 
 In terms of database operations an ETL Mapping is the equivalent of a CREATE TABLE AS SELECT (CTAS) operation in an RDBMS. This means that  anything that can be done in the SELECT part (i.e., column projection, arbitrary column expressions, row filtering, grouping and multiple join operations, etc.),  in order to produce a new table, can be included in an ETL Mapping.  
 
-In the Julius EDSL for ETL, we can express an ETL Mapping consisting of various Column Mappings and Relational Operators like this:
+In the Julius EDSL for ETL, we can express an ETL Mapping consisting of various Column Mappings and Relational Operators like this
+(Note: Julius expressions are read *from bottom to top*):
 ```
 myEtlMapping =
       (EtlC $ ...)  -- this is Column Mapping 1
