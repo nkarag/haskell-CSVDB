@@ -38,7 +38,6 @@ where
 Note that *any  function* with a relational tuple (RTuple data type) as input, which returns a Bool can be a predicate. This means that we can have a predicate for our WHERE clause (in SQL parlance) that can be as generic as a function of this type signature can be. This is much more general and powerful than SQL, where the WHERE-clause predicate is restricted to specific expressions.
 
 B. The projection operation
-    [haskell]
 ```
 runProjection :: 
   [ColumnName] -- ^ list of columns to be included in the final result RTable
@@ -47,7 +46,7 @@ runProjection ::
 ```
 
 C. The Inner Join operation:
-
+```
     runInnerJoin ::
         RJoinPredicate
         -> RTable
@@ -55,7 +54,8 @@ C. The Inner Join operation:
         -> RTable
 
 where
-`type RJoinPredicate = RTuple -> RTuple -> Bool`
+type RJoinPredicate = RTuple -> RTuple -> Bool
+```
 Again note, how generic a join predicate can be: *Any function* that receives to relational tuples as input and returns a Bool (indicating when these two tuples match) can play the role of our join predicate. This is much more general and powerful than SQL, where the join predicate is restricted to specific expressions.
 ## ETL over RTables
 ### The Column Mapping
