@@ -182,11 +182,11 @@ myGroupBy =
 myGpred :: RGroupPredicate
 myGpred = undefined
 ```
-**Inner Join** => `SELECT * FROM myTable JOIN myTable2 ON (myJoinPred)`
+**Inner Join** => `SELECT * FROM myTable1 JOIN myTable2 ON (myJoinPred)`
 ```
 myJoin =
    (EtlR $ 
-        (Join (Tab myTable) (Tab myTable2) $ JoinOn myJoinPred) 
+        (Join (TabL myTable1) (Tab myTable2) $ JoinOn myJoinPred) 
      :. ROpEmpty)
 
 myJoinPred :: RJoinPredicate
@@ -204,16 +204,16 @@ myJoinPred = undefined
     -- Hint: read it from bottom to top
     my3Join =
        (EtlR $
-             (Join (Tab myTable4) Previous $ JoinOn myJoinPred3)
-          :. (Join (Tab myTable3) Previous $ JoinOn myJoinPred2)
-          :. (Join (Tab myTable) (Tab myTable2) $ JoinOn myJoinPred) 
+             (Join (TabL myTable4) Previous $ JoinOn myJoinPred3)
+          :. (Join (TabL myTable3) Previous $ JoinOn myJoinPred2)
+          :. (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) 
           :. ROpEmpty)
 ```
-**Union** => `SELECT * FROM myTable UNION SELECT * FROM myTable2`
+**Union** => `SELECT * FROM myTable1 UNION SELECT * FROM myTable2`
 ```
     myUnion = 
        (EtlR $ 
-             (Union (Tab myTable) (Tab myTable2)) 
+             (Union (TabL myTable1) (Tab myTable2)) 
           :. ROpEmpty)
 ```
 A more general **example of an ETL mapping** including *column mappings* and *relational algebra operations*:
