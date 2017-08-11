@@ -1,5 +1,10 @@
 -- IN PROGRESS
 
+<<<20170801		Implement function:	
+					evalJulius :: ETLMappingExpr -> ETLMapping 
+					Finish Testing
+
+					
 <<<20170427		implement 
 					* (DONE) GroupBy and (DONE) Aggregation
 					* (DONE) upsertRtuple (wrapper over HashMap.insert), (DONE) singleton RTable
@@ -11,7 +16,9 @@
 				with Data.List groupby and nubby functions
 
 -- OPEN (Not Started)
-<<<20170630		create an Embedded DSL for easy ETL over CSV files
+<<<20170810		Start a new branch and experiment with 
+					*a top-to-bottom (left-to-right) Julius syntax as well as 
+					*a new syntax that allows to name intermediate results in a chain of ETLMappings and refer to this name as a table (Tab name) at a later ETLMapping. 
 
 <<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
 				in order to implement an SQL command line interface over CSVs
@@ -41,6 +48,11 @@
 
 
 -- COMPLETED
+<<<20170808		Implement full outer join, simply as: (right join) union (left join)
+20170808>>> (Completion)
+
+<<<20170630		create an Embedded DSL for easy ETL over CSV files  -> Julius!
+20170801>>> (Completion)
 
 <<<20170505		Implement Left and Right Outer Joins
 20170509>>> (Completion)

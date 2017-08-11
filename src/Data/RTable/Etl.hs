@@ -20,6 +20,8 @@ commentary with @some markup@.
 module Data.RTable.Etl
     (
         RColMapping (..)
+        ,ColXForm
+        ,createColMapping
         --,runColMapping
         ,runCM
         ,YesNo (..)
@@ -32,6 +34,7 @@ module Data.RTable.Etl
         ,ETLMapping (..)
         --,runETLmapping
         ,etl
+        ,rtabToETLMapping
         ,createLeafETLMapLD
         ,createLeafBinETLMapLD
         ,connectETLMapLD
@@ -96,6 +99,25 @@ data RColMapping =
     |   RMap1xN { srcCol :: ColumnName,         removeSrcCol :: YesNo,  trgColGrp :: [ColumnName],  transform1xN :: RDataType    -> [RDataType], srcRTupleFilter:: RPredicate }    -- ^ single-source column to multiple-target columns mapping (1 to N)
     |   RMapNxM { srcColGrp :: [ColumnName],    removeSrcCol :: YesNo,  trgColGrp :: [ColumnName],  transformNxM :: [RDataType]  -> [RDataType], srcRTupleFilter:: RPredicate }    -- ^ multiple-source column to multiple target columns mapping (N to M)                                                 
 
+type ColXForm = [RDataType]  -> [RDataType]
+
+-- | Constructs an RColMapping.
+-- This is the suggested method for creating a column mapping and not by calling the data constructors directly.
+createColMapping :: 
+       [ColumnName]  -- ^ List of source column names
+    -> [ColumnName]  -- ^ List of target column names
+    -> ColXForm      -- ^ Column Transformation function
+    -> YesNo         -- ^ Remove source column option
+    -> RPredicate    -- ^ Filtering predicate
+    -> RColMapping   -- ^ Output Column Mapping
+createColMapping (src:[]) (trg:[]) xForm remove fPred = RMap1x1 {srcCol = src, removeSrcCol = remove, trgCol = trg, transform1x1 = \x -> unlist $ xForm (x:[]), srcRTupleFilter = fPred}
+                                                            where unlist :: [a] -> a
+                                                                  unlist (x:[]) = x  -- since this is a 1x1 col mapping, we are sure that xForm will return a single element list
+createColMapping srcCols (trg:[]) xForm remove fPred =  RMapNx1 {srcColGrp = srcCols, removeSrcCol = remove, trgCol = trg, transformNx1 = \x -> unlist $ xForm (x), srcRTupleFilter = fPred}                                                                
+                                                            where unlist :: [a] -> a
+                                                                  unlist (x:[]) = x  -- since this is a Nx1 col mapping, we are sure that xForm will return a single element list
+createColMapping (src:[]) trgCols xForm remove fPred =  RMap1xN {srcCol = src, removeSrcCol = remove, trgColGrp = trgCols, transform1xN = \x -> xForm (x:[]), srcRTupleFilter = fPred}                                                                  
+createColMapping srcCols trgCols xForm remove fPred =  RMapNxM {srcColGrp = srcCols, removeSrcCol = remove, trgColGrp = trgCols, transformNxM = xForm, srcRTupleFilter = fPred}
 
 
 -- | runCM operator executes an RColMapping
@@ -208,55 +230,6 @@ runColMapping rmap rtabS =
                 -- return new RTable
                 return trgRtuple
 
-
--- | An RTabMapping is simply a series of RColMappings applied on by one in a fixed order, of the form:
---   RColMapping3 :-> RColMapping2 :-> RColMapping1 Rtab, which  is equivalent to  (RColMapping3 :-> (RColMapping2 :-> (RColMapping1 Rtab)))
---   I.e., the (:->) operator is right associative just like function composition (.).
---   
---   This data type represents a seires of column-based transformation applied to an RTable in order to generate a new RTable.
---
---   An RTabMapping can be applied with the t (rtabTortab) operator.
-{--infixr 9 :->
-data RTabMapping = ColMapEmptyping | RColMapping :-> RTabMapping
---}
-
---type RTabMapping = [RColMapping] 
-
--- | t operator executes an RTabMapping
-{--
-t = runTabMapping
---}
-
--- | Execute basic RTable to Rtable mapping.
---   It returns a new RTable (target) which originates from a (source) RTable
---   based on a detailed column-to-column list of mappings.
---
-{--
-runTabMapping ::
-    RTabMapping    -- ^ a series of mappings describing how each value of each column of the target table will be generated based on source columns and transformations
-    -> RTable            -- ^ Source RTable
-    -> RTable            -- ^ Target RTable
-runTabMapping EmptyColMapping rtabSource      = rtabSource  
-runTabMapping (colMap :-> tabMap) rtabSource  = 
-            let currentRtab = runTabMapping tabMap rtabSource  
-            in  runCM colMap currentRtab 
---}
-
---   The basic assumption here is that in order to produce the target RTable, we need to apply
---   each one of the transformations embedded in the list of input RColMappings, ***from left to right, one by one, starting from the source RTable***. 
---   Each mapping in the list receives as input the output RTable of the previous mapping. This means that if two mappings affect the same column of an RTable, 
---   then the righmost transformation will be the last to change the column value.
---
-{--runTabMapping ::
-    RTabMapping    -- ^ a series of mappings describing how each value of each column of the target table will be generated based on source columns and transformations
-    -> RTable            -- ^ Source RTable
-    -> RTable            -- ^ Target RTable
-runTabMapping [] rtabSource     = rtabSource  -- if, there is no transformation left, then just return the source RTable
-runTabMapping (rmap:rmaps) rtabSource     = runTabMapping rmaps newRTab  -- else, apply the leftmost mapping and continue with the rest in the list.
-    where newRTab = runColMapping rmap rtabSource 
---}
-
-
 -- | An ETL operation applied to an RTable can be either an ROperation (a relational agebra operation like join, filter etc.) defined in 'RTable' module,
 --   or an RColMapping applied to an RTable
 data ETLOperation =  
@@ -288,24 +261,6 @@ runBinaryETLOperation ::
     -> RTable  -- ^ input RTable2    
     -> RTable  -- ^ output RTable
 runBinaryETLOperation ETLrOp {rop  = relOp} inpT1 inpT2 = ropB relOp inpT1 inpT2
-
-
--- | An ETL operation applied to an RTable can be either an ROperation (a relational agebra operation like join, filter etc.) defined in 'RTable' module,
---   or an RTabMapping applied to an RTable
-{--
-data ETLOperation =  ROperation | RTabMapping RTable deriving (Eq, Show)
---}
-
---   Implementation: 
---   An ETL mapping is implemented as a list of ETLOperations that are evaluated from head to tail (left to right). The first ETL operation
---   is evaluated with an input RTable, which is then passed as input to the rest ETL operations.
---   for example an ETLMapping is the following:
---
---   ETLcOP {cmap = map1} : ETLrOp { rop = RFilter} : ETLcOP { cmap = map2 } : ETLrOp { rop = REJoin }
---
--- type ETLMapping = [ETLOperation]
-
-
 
 
 -- | ETLmapping : it is the equivalent of a mapping in an ETL tool and consists of a series of ETLOperations that are applied, one-by-one,
@@ -467,23 +422,30 @@ createLeafBinETLMapLD etlop rt1 rt2 = ETLMapLD { etlOp = etlop, tabL = rtabToETL
 -- @
 -- Example:
 -- @
---   -- connect a Unary ETL mapping
+--   -- connect a Unary ETL mapping (etlOp2)
 --
 --                           etlOp2    
 --                          /      \ 
 --                       etlOp1    emptyRTab
 --        
---   connectETLMapLD etlOp2 prevMap emptyRTable
+--   => connectETLMapLD etlOp2 emptyRTable prevMap
 --
---   -- connect a Binary ETL Mapping
+--   -- connect a Binary ETL Mapping (etlOp3)
 --
 --                                 etlOp3 
 --                              /       \ 
 --                           etlOp2     rtab2
 --
---   connectETLMapLD etlOp3 prevMap rtab2
+--   => connectETLMapLD etlOp3 rtab2 prevMap
 -- @
 --
+-- Note that the right branch (RTable) appears first in the list of input arguments of this function and 
+-- the left branch (ETLMapping) appears second. This is strange, and one could thought that it is a mistake
+-- (i.e., the left branch should appear first and the right branch second) since we are reading from left to right.
+-- However this was a deliberate choice, so that we leave the left branch (which is the connection point with the
+-- previous ETLMapping) as the last argument, and thus we can partially apply the argumenets and get a new function
+-- with input parameter only the previous mapping. This is very helpfull in function composition
+-- 
 connectETLMapLD ::
         ETLOperation  -- ^ ETL operation of this ETL Mapping
      -> RTable        -- ^ Right RTable (right branch) (if this is a Unary ETL mapping this should be an emptyRTable) 

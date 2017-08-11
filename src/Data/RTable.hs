@@ -29,6 +29,8 @@ module Data.RTable
         ,RPredicate
         ,RGroupPredicate
         ,RJoinPredicate
+        ,UnaryRTableOperation
+        ,BinaryRTableOperation
         ,Name
         ,ColumnName
         ,RTableName
@@ -75,6 +77,7 @@ module Data.RTable
         ,lJ
         --,runRightJoin
         ,rJ
+        ,foJ
       --  ,runUnaryROperation
         ,ropU
       --  ,runBinaryROperation
@@ -193,8 +196,73 @@ data RDataType =
       | RDouble { rdouble :: Double }
     -- RFloat  { rfloat :: Float }
       | Null
-      deriving (Show, Eq, TB.Typeable, Ord, Read)   -- http://stackoverflow.com/questions/6600380/what-is-haskells-data-typeable
+      deriving (Show,TB.Typeable, Ord, Read)   -- http://stackoverflow.com/questions/6600380/what-is-haskells-data-typeable
 
+-- | We need to explicitly specify due to NULL logic (anything compared to NULL returns false)
+-- @
+-- Null == _ = False
+-- _ == Null = False
+-- Null /= _ = False
+-- _ /= Null = False
+-- @
+instance Eq RDataType where
+    RInt i1 == RInt i2 = i1 == i2
+    RInt i == _ = False
+    RText t1 == RText t2 = t1 == t2
+    RText t1 == _ = False
+    RDate t1 s1 == RDate t2 s2 = (t1 == t1) && (s1 == s2)
+    RDate t1 s1 == _ = False
+    RTime t1 == RTime t2 = t1 == t2
+    RTime t1 == _ = False
+    RDouble d1 == RDouble d2 = d1 == d2
+    RDouble d1 == _ = False
+-- Watch out: NULL logic (anything compared to NULL returns false)
+    Null == Null = False
+    _ == Null = False
+    Null == _ = False
+
+    Null /= Null = False
+    _ /= Null = False
+    Null /= _ = False
+    x /= y = not (x == y) 
+
+instance Num RDataType where
+    (+) (RInt i1) (RInt i2) = RInt (i1 + i2)
+    (+) (RDouble d1) (RDouble d2) = RDouble (d1 + d2)
+    (+) (RDouble d1) (RInt i2) = RDouble (d1 + fromIntegral i2)
+    (+) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 + d2)
+    -- (+) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
+    -- (+) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
+    -- (+) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
+    -- (+) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL    
+    (+) (RInt i1) (Null) = Null
+    (+) (Null) (RInt i2) = Null
+    (+) (RDouble d1) (Null) = Null
+    (+) (Null) (RDouble d2) = Null
+    (+) _ _ = Null
+    (*) (RInt i1) (RInt i2) = RInt (i1 * i2)
+    (*) (RDouble d1) (RDouble d2) = RDouble (d1 * d2)
+    (*) (RDouble d1) (RInt i2) = RDouble (d1 * fromIntegral i2)
+    (*) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 * d2)
+    -- (*) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
+    -- (*) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
+    -- (*) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
+    -- (*) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL
+    (*) (RInt i1) (Null) = Null
+    (*) (Null) (RInt i2) = Null
+    (*) (RDouble d1) (Null) = Null
+    (*) (Null) (RDouble d2) = Null
+    (*) _ _ = Null
+    abs (RInt i) = RInt (abs i)
+    abs (RDouble i) = RDouble (abs i)
+    abs _ = Null
+    signum (RInt i) = RInt (signum i)
+    signum (RDouble i) = RDouble (signum i)
+    signum _ = Null
+    fromInteger i = RInt i
+    negate (RInt i) = RInt (negate i)
+    negate (RDouble i) = RDouble (negate i)
+    negate _ = Null
 -- | Standard date format
 stdDateFormat = "DD/MM/YYYY"
 
@@ -244,35 +312,6 @@ upsertRTuple cname newVal tupsrc = HM.insert cname newVal tupsrc
 
 -- newtype NumericRDT = NumericRDT { getRDataType :: RDataType } deriving (Eq, Ord, Read, Show, Num)
 
-instance Num RDataType where
-    (+) (RInt i1) (RInt i2) = RInt (i1 + i2)
-    (+) (RDouble d1) (RDouble d2) = RDouble (d1 + d2)
-    (+) (RDouble d1) (RInt i2) = RDouble (d1 + fromIntegral i2)
-    (+) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 + d2)
-    (+) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
-    (+) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
-    (+) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
-    (+) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL    
-    (+) _ _ = Null
-    (*) (RInt i1) (RInt i2) = RInt (i1 * i2)
-    (*) (RDouble d1) (RDouble d2) = RDouble (d1 * d2)
-    (*) (RDouble d1) (RInt i2) = RDouble (d1 * fromIntegral i2)
-    (*) (RInt i1) (RDouble d2) = RDouble (fromIntegral i1 * d2)
-    (*) (RInt i1) (Null) = RInt i1  -- ignore Null - just like in SQL
-    (*) (Null) (RInt i2) = RInt i2  -- ignore Null - just like in SQL
-    (*) (RDouble d1) (Null) = RDouble d1  -- ignore Null - just like in SQL
-    (*) (Null) (RDouble d2) = RDouble d2  -- ignore Null - just like in SQL    
-    (*) _ _ = Null
-    abs (RInt i) = RInt (abs i)
-    abs (RDouble i) = RDouble (abs i)
-    abs _ = Null
-    signum (RInt i) = RInt (signum i)
-    signum (RDouble i) = RDouble (signum i)
-    signum _ = Null
-    fromInteger i = RInt i
-    negate (RInt i) = RInt (negate i)
-    negate (RDouble i) = RDouble (negate i)
-    negate _ = Null
 
 -- | RTimestamp data type
 data RTimestamp = RTimestampVal {
@@ -605,7 +644,8 @@ type RPredicate = RTuple -> Bool
 -- | Definition of Relational Algebra operations.
 -- These are the valid operations between RTables
 data ROperation = 
-      RUnion   -- ^ Union 
+      ROperationEmpty
+    | RUnion   -- ^ Union 
     | RInter     -- ^ Intersection
     | RDiff    -- ^ Difference
     | RPrj    { colPrjList :: [ColumnName] }   -- ^ Projection
@@ -624,10 +664,16 @@ data ROperation =
                                                                                                       -- @
                                                                                                       -- \_ _ -> True
                                                                                                       -- @
-    | RCombinedOp { rcombOp :: RTable -> RTable  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . RFilter), in the form of an RTable -> RTable function.
+    | RCombinedOp { rcombOp :: UnaryRTableOperation  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . RFilter), in the form of an RTable -> RTable function.
                                                      --  In this sense we can also include a binary operation (e.g. join), if we partially apply the join to one RTable
                                                      --  e.g., (ij jpred rtab) . (p plist) . (f pred)
-    | RBinOp { rbinOp :: RTable -> RTable -> RTable } -- ^ A generic binary ROperation.
+    | RBinOp { rbinOp :: BinaryRTableOperation } -- ^ A generic binary ROperation.
+
+-- | A generic unary operation on a RTable
+type UnaryRTableOperation = RTable -> RTable
+
+-- | A generic binary operation on RTable
+type BinaryRTableOperation = RTable -> RTable -> RTable
 
 
  --deriving (Eq,Show)
@@ -1038,6 +1084,18 @@ runRightJoin jpred rtab rightRTab = do
             else HM.union rtupRight (createNullRTuple colNamesList)
                     where colNamesList = HM.keys rtup
     return targetRtuple
+
+-- | RTable Full Outer Join Operator
+foJ = runFullOuterJoin
+
+-- | Implements a Full Outer Join operation between two RTables (any type of join predicate is allowed)
+-- A full outer join is the union of the left and right outer joins respectively.
+runFullOuterJoin ::
+    RJoinPredicate
+    -> RTable
+    -> RTable
+    -> RTable
+runFullOuterJoin jpred leftRTab rightRTab = (lJ jpred leftRTab rightRTab) `u` (rJ jpred leftRTab rightRTab)
 
 -- | RTable Union Operator
 u = runUnion

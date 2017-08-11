@@ -7,6 +7,7 @@ module Main where
 import qualified CSVdb.Base as C
 import qualified Data.RTable as T
 import qualified Data.RTable.Etl as E
+import Data.RTable.Julius
 
 --import RTable
 --import QProcessor
@@ -75,12 +76,29 @@ main = do
                                         []  -- list of unique keys
         csvNew2 = C.rtableToCSV rtmdata2 rtabNew2  
 
+        -- Test Julius
+        rtabNew2_J = E.etl $ evalJulius $
+                (EtlR $ 
+                       (Select ["Name","Number"] $ From Previous)
+                    :. (Filter (From Previous) $ FilterBy (\t -> t!"Number" > T.RInt {T.rint = 30 }))
+                    :. (Select ["Name","MyTime","Number"] $ From Previous)
+                    :. (Filter (From $ Tab rtab) $ FilterBy (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"}) )
+                    :. ROpEmpty)
+            :-> EtlMapEmpty
+
+        csvNew2_J = C.rtableToCSV rtmdata2 rtabNew2_J  
+
+
     --print / write to file
     C.writeCSV fo csvNew
     C.printCSV csvNew        
     let foName2 = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t2.csv"
     C.writeCSV (unpack foName2) csvNew2            
     C.printCSV csvNew2
+    let foName2_J = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t2_J.csv"
+    C.writeCSV (unpack foName2_J) csvNew2_J
+    C.printCSV csvNew2_J
+
 
     -- *** test Column Mapping
     -- create a new column holding the doubled value from the source column
@@ -94,8 +112,21 @@ main = do
                                        )   
                                        []  -- primary key
                                        []  -- list of unique keys
+
+    -- Test Julius
+        rtabNew3_J = E.etl $ evalJulius $
+                    (EtlC $ 
+                        Source ["Number"] $
+                        Target ["NewNumber"] $
+                        By (\[x] -> [2*x]) (On $ Tab rtabNew2)
+                        DontRemoveSrc $
+                        FilterBy (\_ -> True) )
+                :-> EtlMapEmpty
+
         
     writeResult fo "_t3.csv" rtmdata3 rtabNew3 
+    writeResult fo "_t3_J.csv" rtmdata3 rtabNew3_J 
+
     --     foName3 = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t3.csv"
     --     csvNew3 = C.rtableToCSV rtmdata3 rtabNew3
     -- C.writeCSV (unpack foName3) csvNew3            
@@ -114,8 +145,16 @@ main = do
                                        )   
                                        []  -- primary key
                                        []  -- list of unique keys
+    -- Test Julius
+        rtabNew4_J = E.etl $ evalJulius $
+                (EtlR $ 
+                        (Join (TabL rtabNew3) (Tab rtab) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                    :.  ROpEmpty)
+            :-> EtlMapEmpty
+
         
     writeResult fo "_t4.csv" rtmdata4 rtabNew4
+    writeResult fo "_t4_J.csv" rtmdata4 rtabNew4_J
 
     -- *** Test union, interesection, diff
     let -- change the value in column NewNumber
@@ -135,7 +174,46 @@ main = do
                                        []  -- list of unique keys
 
         rtabNew6 = rtabNew5 `T.i` rtabNew4
-        rtabNew7 = rtabNew5 `T.d` rtabNew4
+        rtabNew7 =  rtabNew4 `T.d` rtabNew5
+
+    -- Test Julius
+        rtabNew5_J = E.etl $ evalJulius $
+                (EtlR $  -- rtabNew5
+                        (Union (TabL rtabNew4) (Previous))
+                    :.  ROpEmpty)
+            :-> (EtlC $ 
+                    Source ["NewNumber"] $
+                    Target ["NewNumber"] $
+                    By (\[x] -> [x + 100]) (On $ Tab rtabNew4)
+                    DontRemoveSrc $
+                    FilterBy (\_ -> True))                                
+            :-> EtlMapEmpty
+
+        rtabNew6_J = E.etl $ evalJulius $
+                (EtlR $ -- rtabNew6
+                        (Intersect (TabL rtabNew4) (Tab rtabNew5))
+                    :.  ROpEmpty)
+            :-> EtlMapEmpty
+
+        -- Build rtabNew7 with a single ETL Mapping
+        rtabNew7_J = E.etl $ evalJulius $
+                (EtlR $
+                        (Minus (TabL rtabNew4) (Previous))
+                    :.  ROpEmpty)
+            :-> (EtlR $ -- rtabNew6
+                        (Intersect (TabL rtabNew4) (Previous))
+                    :.  ROpEmpty)
+            :-> (EtlR $  -- rtabNew5
+                        (Union (TabL rtabNew4) (Previous))
+                    :.  ROpEmpty)
+            :-> (EtlC $ 
+                    Source ["NewNumber"] $
+                    Target ["NewNumber"] $
+                    By (\[x] -> [x + 100]) (On $ Tab rtabNew4)
+                    DontRemoveSrc $
+                    FilterBy (\_ -> True))                
+            :-> EtlMapEmpty
+
     ---- DEBUG
     -- putStrLn   "------rtabNew3-------" 
     -- print rtabNew3
@@ -150,8 +228,11 @@ main = do
     ----
 
     writeResult fo "_t5.csv" rtmdata5 rtabNew5
+    writeResult fo "_t5_J.csv" rtmdata5 rtabNew5_J
     writeResult fo "_t6.csv" rtmdata5 rtabNew6
+    writeResult fo "_t6_J.csv" rtmdata5 rtabNew6_J
     writeResult fo "_t7.csv" rtmdata5 rtabNew7
+    writeResult fo "_t7_J.csv" rtmdata5 rtabNew7_J
 
     -- *** Change existing column name 
     let -- change the value in column NewNumber

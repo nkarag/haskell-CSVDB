@@ -44,8 +44,9 @@ runProjection ::
   -> RTable
   -> RTable
 ```
-C. The Inner Join operation:
 
+C. The Inner Join operation:
+```
     runInnerJoin ::
         RJoinPredicate
         -> RTable
@@ -53,7 +54,8 @@ C. The Inner Join operation:
         -> RTable
 
 where
-`type RJoinPredicate = RTuple -> RTuple -> Bool`
+type RJoinPredicate = RTuple -> RTuple -> Bool
+```
 Again note, how generic a join predicate can be: *Any function* that receives to relational tuples as input and returns a Bool (indicating when these two tuples match) can play the role of our join predicate. This is much more general and powerful than SQL, where the join predicate is restricted to specific expressions.
 ## ETL over RTables
 ### The Column Mapping
@@ -89,7 +91,8 @@ The ETLMapping data type is the equivalent of a *mapping* in an ETL tool. It con
 
 In terms of database operations an ETL Mapping is the equivalent of a CREATE TABLE AS SELECT (CTAS) operation in an RDBMS. This means that  anything that can be done in the SELECT part (i.e., column projection, arbitrary column expressions, row filtering, grouping and multiple join operations, etc.),  in order to produce a new table, can be included in an ETL Mapping.  
 
-In the Julius EDSL for ETL, we can express an ETL Mapping consisting of various Column Mappings and Relational Operators like this:
+In the Julius EDSL for ETL, we can express an ETL Mapping consisting of various Column Mappings and Relational Operators like this
+(Note: Julius expressions are read *from bottom to top*):
 ```
 myEtlMapping =
       (EtlC $ ...)  -- this is Column Mapping 1
@@ -179,11 +182,11 @@ myGroupBy =
 myGpred :: RGroupPredicate
 myGpred = undefined
 ```
-**Inner Join** => `SELECT * FROM myTable JOIN myTable2 ON (myJoinPred)`
+**Inner Join** => `SELECT * FROM myTable1 JOIN myTable2 ON (myJoinPred)`
 ```
 myJoin =
    (EtlR $ 
-        (Join (Tab myTable) (Tab myTable2) $ JoinOn myJoinPred) 
+        (Join (TabL myTable1) (Tab myTable2) $ JoinOn myJoinPred) 
      :. ROpEmpty)
 
 myJoinPred :: RJoinPredicate
@@ -201,16 +204,16 @@ myJoinPred = undefined
     -- Hint: read it from bottom to top
     my3Join =
        (EtlR $
-             (Join (Tab myTable4) Previous $ JoinOn myJoinPred3)
-          :. (Join (Tab myTable3) Previous $ JoinOn myJoinPred2)
-          :. (Join (Tab myTable) (Tab myTable2) $ JoinOn myJoinPred) 
+             (Join (TabL myTable4) Previous $ JoinOn myJoinPred3)
+          :. (Join (TabL myTable3) Previous $ JoinOn myJoinPred2)
+          :. (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) 
           :. ROpEmpty)
 ```
-**Union** => `SELECT * FROM myTable UNION SELECT * FROM myTable2`
+**Union** => `SELECT * FROM myTable1 UNION SELECT * FROM myTable2`
 ```
     myUnion = 
        (EtlR $ 
-             (Union (Tab myTable) (Tab myTable2)) 
+             (Union (TabL myTable1) (Tab myTable2)) 
           :. ROpEmpty)
 ```
 A more general **example of an ETL mapping** including *column mappings* and *relational algebra operations*:
