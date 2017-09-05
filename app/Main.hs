@@ -1,3 +1,6 @@
+
+
+
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}  
 --{-# LANGUAGE BangPatterns #-}
@@ -78,6 +81,16 @@ main = do
 
         -- Test Julius
         rtabNew2_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Filter (From $ Tab rtab) $ FilterBy (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"}))
+                    :. (Select ["Name","MyTime","Number"] $ From Previous)
+                    :. (Filter (From Previous) $ FilterBy (\t -> t!"Number" > T.RInt {T.rint = 30 }))
+                    :.  (Select ["Name","Number"] $ From Previous)
+                )
+
+{-        rtabNew2_J = E.etl $ evalJulius $
                 (EtlR $ 
                        (Select ["Name","Number"] $ From Previous)
                     :. (Filter (From Previous) $ FilterBy (\t -> t!"Number" > T.RInt {T.rint = 30 }))
@@ -85,7 +98,7 @@ main = do
                     :. (Filter (From $ Tab rtab) $ FilterBy (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"}) )
                     :. ROpEmpty)
             :-> EtlMapEmpty
-
+-}
         csvNew2_J = C.rtableToCSV rtmdata2 rtabNew2_J  
 
 
@@ -115,6 +128,15 @@ main = do
 
     -- Test Julius
         rtabNew3_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $ 
+                        Source ["Number"] $
+                        Target ["NewNumber"] $
+                        By (\[x] -> [2*x]) (On $ Tab rtabNew2)
+                        DontRemoveSrc $
+                        FilterBy (\_ -> True) )
+
+{-        rtabNew3_J = E.etl $ evalJulius $
                     (EtlC $ 
                         Source ["Number"] $
                         Target ["NewNumber"] $
@@ -122,7 +144,7 @@ main = do
                         DontRemoveSrc $
                         FilterBy (\_ -> True) )
                 :-> EtlMapEmpty
-
+-}
         
     writeResult fo "_t3.csv" rtmdata3 rtabNew3 
     writeResult fo "_t3_J.csv" rtmdata3 rtabNew3_J 
@@ -147,11 +169,18 @@ main = do
                                        []  -- list of unique keys
     -- Test Julius
         rtabNew4_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Join (TabL rtabNew3) (Tab rtab) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                )
+
+{-        rtabNew4_J = E.etl $ evalJulius $
                 (EtlR $ 
                         (Join (TabL rtabNew3) (Tab rtab) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
                     :.  ROpEmpty)
             :-> EtlMapEmpty
-
+-}
         
     writeResult fo "_t4.csv" rtmdata4 rtabNew4
     writeResult fo "_t4_J.csv" rtmdata4 rtabNew4_J
@@ -174,10 +203,93 @@ main = do
                                        []  -- list of unique keys
 
         rtabNew6 = rtabNew5 `T.i` rtabNew4
-        rtabNew7 =  rtabNew4 `T.d` rtabNew5
+        rtabNew7 =  rtabNew5 `T.d` rtabNew6
 
     -- Test Julius
-        rtabNew5_J = E.etl $ evalJulius $
+        rtabNew7_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $ 
+                    Source ["NewNumber"] $
+                    Target ["NewNumber"] $
+                    By (\[x] -> [x + 100]) (On $ Tab rtabNew4)
+                    DontRemoveSrc $
+                    FilterBy (\_ -> True))                
+            :-> (EtlR $  -- rtabNew5
+                    ROpStart
+                    :.  (Union (TabL rtabNew4) (Previous))
+                )
+            :-> (EtlR $ -- rtabNew6
+                    ROpStart
+                    :.  (Intersect (TabL rtabNew4) (Previous))
+                )
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Minus 
+                            (TabL $ -- this is the rtabNew5 repeated
+                                E.etl $ evalJulius $
+                                            EtlMapStart
+                                            :-> (EtlC $ 
+                                                    Source ["NewNumber"] $
+                                                    Target ["NewNumber"] $
+                                                    By (\[x] -> [x + 100]) (On $ Tab rtabNew4)
+                                                    DontRemoveSrc $
+                                                    FilterBy (\_ -> True))                
+                                            :-> (EtlR $  -- rtabNew5
+                                                    ROpStart
+                                                    :.  (Union (TabL rtabNew4) (Previous))
+                                                )                                
+                            ) 
+                            (Previous))
+                )
+
+
+        rtabNew7_J2 = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $  -- rtabNew5
+                    ROpStart
+                    :.  (Minus (TabL rtabNew5) (Tab rtabNew6))
+                )
+
+
+        rtabNew7_J3 = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $  -- rtabNew5
+                    ROpStart
+                    :.  (MinusP (Tab rtabNew5) (TabL rtabNew6))
+                )
+
+-- test Intermediate named results
+        rtabNew7a_J = E.etl $ evalJulius $ etlXpression
+
+        etlXpression = 
+            EtlMapStart
+            :-> (EtlC $ 
+                    Source ["NewNumber"] $
+                    Target ["NewNumber"] $
+                    By (\[x] -> [x + 100]) (On $ Tab rtabNew4)
+                    DontRemoveSrc $
+                    FilterBy (\_ -> True))                
+            :=> NamedResult "rtabNew5" (EtlR $  -- rtabNew5
+                    ROpStart
+                    :.  (Union (TabL rtabNew4) (Previous))
+                )
+            :-> (EtlR $ -- rtabNew6
+                    ROpStart
+                    :.  (Intersect (TabL rtabNew4) (Previous))
+                )
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Minus 
+                            (TabL $ -- this is the rtabNew5 repeated
+                                juliusToRTable $ takeNamedResult "rtabNew5" etlXpression    ---  THIS IS THE POINT TO BE TESTED!!!
+                            ) 
+                            (Previous))
+                )
+
+    writeResult fo "_t7a_J.csv" rtmdata5 rtabNew7a_J
+
+
+{-        rtabNew5_J = E.etl $ evalJulius $
                 (EtlR $  -- rtabNew5
                         (Union (TabL rtabNew4) (Previous))
                     :.  ROpEmpty)
@@ -213,6 +325,7 @@ main = do
                     DontRemoveSrc $
                     FilterBy (\_ -> True))                
             :-> EtlMapEmpty
+-}
 
     ---- DEBUG
     -- putStrLn   "------rtabNew3-------" 
@@ -228,11 +341,13 @@ main = do
     ----
 
     writeResult fo "_t5.csv" rtmdata5 rtabNew5
-    writeResult fo "_t5_J.csv" rtmdata5 rtabNew5_J
+    --writeResult fo "_t5_J.csv" rtmdata5 rtabNew5_J
     writeResult fo "_t6.csv" rtmdata5 rtabNew6
-    writeResult fo "_t6_J.csv" rtmdata5 rtabNew6_J
+    --writeResult fo "_t6_J.csv" rtmdata5 rtabNew6_J
     writeResult fo "_t7.csv" rtmdata5 rtabNew7
     writeResult fo "_t7_J.csv" rtmdata5 rtabNew7_J
+    writeResult fo "_t7_J2.csv" rtmdata5 rtabNew7_J2
+    writeResult fo "_t7_J3.csv" rtmdata5 rtabNew7_J3
 
     -- *** Change existing column name 
     let -- change the value in column NewNumber
@@ -250,7 +365,20 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew8_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $
+                    Source ["NewNumber"] $
+                    Target ["NewNewNumber"] $
+                    By (\[x] -> [x]) (On $ Tab rtabNew5)
+                    RemoveSrc $
+                    FilterBy (\_ -> True)
+                )
+
+
     writeResult fo "_t8.csv" rtmdata8 rtabNew8                                       
+    writeResult fo "_t8_J.csv" rtmdata8 rtabNew8_J
 
     -- Test a RMapNx1 column mapping
     let 
@@ -269,7 +397,19 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew9_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $
+                    Source ["Name","MyTime"] $
+                    Target ["New_Nx1_Col"] $
+                    By (\[n, T.RTime{T.rtime = t}] -> [n `E.rdtappend` (T.RText "<---->") `E.rdtappend` (T.rTimeStampToRText T.stdTimestampFormat t)]) (On $ Tab rtabNew8)
+                    RemoveSrc $
+                    FilterBy (\_ -> True)
+                )
+
     writeResult fo "_t9.csv" rtmdata9 rtabNew9    
+    writeResult fo "_t9_J.csv" rtmdata9 rtabNew9_J    
 
  -- Test a RMap1xN column mapping
     let 
@@ -291,7 +431,19 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew10_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $
+                    Source ["New_Nx1_Col"] $
+                    Target ["1xN_A","1xN_B","1xN_C"] $
+                    By (\[(T.RText txt)] -> [T.RText (Data.Text.take 5 txt), T.RText "<-|-|-|->", T.RText (Data.Text.takeEnd 10 txt)]) (On $ Tab rtabNew9)
+                    DontRemoveSrc $
+                    FilterBy (\_ -> True)
+                )
+
     writeResult fo "_t10.csv" rtmdata10 rtabNew10                                       
+    writeResult fo "_t10_J.csv" rtmdata10 rtabNew10_J                                       
 
 -- Test a RMapNxM column mapping
     let 
@@ -314,11 +466,25 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew11_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlC $
+                    Source ["1xN_A","1xN_B","1xN_C"] $
+                    Target ["ColNew1","ColNew2"] $
+                    By transformation (On $ Tab rtabNew10)
+                    RemoveSrc $
+                    FilterBy (\_ -> True)
+                )
+            where
+                transformation [T.RText t1, T.RText t2, T.RText t3] = [T.RText (t1 `append` t3), T.RText t2]
+
     writeResult fo "_t11.csv" rtmdata11 rtabNew11                                       
+    writeResult fo "_t11_J.csv" rtmdata11 rtabNew11_J                                       
 
 -- Test removeColumn operation
     let 
-        rtabNew12 = T.removeColumn "NewNewNumberlalala" (T.removeColumn "MyDate" rtabNew11)        
+        rtabNew12 = T.removeColumn "NewNewNumber" (T.removeColumn "MyDate" rtabNew11)        
         rtmdata12 = T.createRTableMData ( "TestTable12", 
                                          [ -- ("Name", T.Varchar),
                                             ("New_Nx1_Col", T.Varchar)
@@ -334,18 +500,33 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew12_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (GenUnaryOp (On $ Tab rtabNew11) (ByUnaryOp myfunc))
+                )
+            where
+                myfunc = (T.removeColumn "NewNewNumber") . (T.removeColumn "MyDate")
+
+
     writeResult fo "_t12.csv" rtmdata12 rtabNew12 -- this calls internally C.rtableToCSV and thus it cannot actually test the column removal (because the column removal is hidden
                                                   -- by the RTable metadata). An explicit print of the new RTable is required in order to check correctness.
+
+    writeResult fo "_t12_J.csv" rtmdata12 rtabNew12_J                                                  
+    
     print rtabNew12
+    print rtabNew12_J
 
 --  Test combined Roperations
     let
-       myfilter = T.f (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"})
-       myprojection = T.p ["Name","MyTime","Number", "ColNew2"]
-       myjoin = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew12  -- !!! Check that the other table participating in the join is embedded in the myjoin operation
-       rcombined = myprojection . myjoin . myfilter 
-       rtabNew13 = T.rComb rcombined rtab
-       rtmdata13 = T.createRTableMData ( "TestTable13", 
+        myfilter = T.f (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"})
+        myprojection = T.p ["Name","MyTime","Number", "ColNew2"]
+        myjoin = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew12  -- !!! Check that the other table participating in the join is embedded in the myjoin operation
+        rcombined = myprojection . myjoin . myfilter 
+        rtabNew13 = T.rComb rcombined rtab
+        rtmdata13 = T.createRTableMData ( "TestTable13", 
                                 [   ("Name", T.Varchar)
                                     --,("MyDate", T.Date "DD/MM/YYYY")
                                     ,("MyTime", T.Timestamp "DD/MM/YYYY HH24:MI:SS")
@@ -357,9 +538,22 @@ main = do
                                 []  -- primary key
                                 []  -- list of unique keys
 
+    -- Test Julius
+        rtabNew13_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Filter (From $ Tab rtab) $ FilterBy (\t -> t!"Name" == T.RText {T.rtext = "Karagiannidis"}))
+                    :.  (Join (TabL rtabNew12) (Previous) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                    :.  (Select ["Name","MyTime","Number", "ColNew2"] $ From Previous)
+                )
+
 
     writeResult fo "_t13.csv" rtmdata13 rtabNew13
+    writeResult fo "_t13_J.csv" rtmdata13 rtabNew13_J
+    
     print rtabNew13
+    print rtabNew13_J
 
 -- Test Left Outer Join
     let rtabNew14 = T.lJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
@@ -374,12 +568,53 @@ main = do
                                        )   
                                        []  -- primary key
                                        []  -- list of unique keys
+
+-- debug left join 
+    -- the first part is the join
+    let rtabNew14_dbg_1part = T.iJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3  -- these are the rows of the left tab (enhanced with new columns) that satisfy the join
+        -- project only left tab's columns
+        rtabNew14_dbg_1part_proj = T.p (T.getColumnNamesfromRTab rtab) rtabNew14_dbg_1part
+
+
+        -- enhance the left tab with the new columns with NULL values
+--        left_tab_enhanced = T.iJ (\t1 t2 -> True) rtab (T.createSingletonRTable $ T.createNullRTuple ["Name","Number","NewNumber"])
+        
+        -- the second part are the rows from the preserving table that dont join
+        rtabNew14_dbg_2part_a = 
+            let
+                leftTab = rtab --T.nvlRTable "DNumber" (T.RText "x") rtab  -- need to eliminate the Null values because Null == Null gives False.
+                rightTab = rtabNew14_dbg_1part_proj --T.nvlRTable "DNumber" (T.RText "x") rtabNew14_dbg_1part_proj
+            in  T.d leftTab rightTab --diffTab = T.d leftTab rightTab  -- get the  rows from left tab that dont join
+        --    in  -- remove "x" and turn it back to Null
+        --        T.decodeRTable "DNumber" (T.RText "x") T.Null T.Null T.Ignore diffTab
+
+        -- enhance this with null columns from the non-preserving table
+        rtabNew14_dbg_2part = T.iJ (\t1 t2 -> True) rtabNew14_dbg_2part_a (T.createSingletonRTable $ T.createNullRTuple $ (T.getColumnNamesfromRTab rtabNew3))
+
+        -- finally, union the two parts
+        rtabNew14_dbg = T.u rtabNew14_dbg_1part rtabNew14_dbg_2part
+
+    -- Test Julius
+        rtabNew14_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (LJoin (TabL rtab) (Tab rtabNew3) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                )
+
         
     writeResult fo "_t14.csv" rtmdata14 rtabNew14
+    writeResult fo "_t14_dbg_1part.csv" rtmdata14 rtabNew14_dbg_1part
+    writeResult fo "_t14_dbg_1part_proj.csv" rtmdata rtabNew14_dbg_1part_proj
+    writeResult fo "_t14_dbg_dbg_2part_a.csv" rtmdata  rtabNew14_dbg_2part_a
+    --writeResult fo "_t14_left_tab_enhanced.csv" rtmdata14 left_tab_enhanced
+    writeResult fo "_t14_dbg_2part.csv" rtmdata14 rtabNew14_dbg_2part
+    writeResult fo "_t14_dbg.csv" rtmdata14 rtabNew14_dbg
+    writeResult fo "_t14_J.csv" rtmdata14 rtabNew14_J
 
 
 -- Test Right Outer Join
-    let rtabNew15 = T.rJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew3 rtab
+    let rtabNew15 = T.rJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
         rtmdata15 = T.createRTableMData ( "TestTable15", 
                                          [  ("Name", T.Varchar),
                                             ("MyDate", T.Date "DD/MM/YYYY"), 
@@ -391,8 +626,55 @@ main = do
                                        )   
                                        []  -- primary key
                                        []  -- list of unique keys
+
+    -- Test Julius
+        rtabNew15_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (RJoin (TabL rtab) (Tab rtabNew3) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                )
         
     writeResult fo "_t15.csv" rtmdata15 rtabNew15
+    writeResult fo "_t15_J.csv" rtmdata15 rtabNew15_J
+
+-- Test Full Outer Join
+    let rtabNew15fo = T.foJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
+        rtabNew15fo2 = T.foJ (\t1 t2 -> t1!"Number" == t2!"Number") rtabNew3 rtab 
+        rtmdata15 = T.createRTableMData ( "TestTable15", 
+                                         [  ("Name", T.Varchar),
+                                            ("MyDate", T.Date "DD/MM/YYYY"), 
+                                            ("MyTime", T.Timestamp "DD/MM/YYYY HH24:MI:SS"), 
+                                            ("Number", T.Integer), 
+                                            ("DNumber", T.Double),
+                                            ("NewNumber", T.Integer)
+                                         ]                                       
+                                       )   
+                                       []  -- primary key
+                                       []  -- list of unique keys
+
+    -- Test Julius
+        rtabNew15fo_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (FOJoin (TabL rtab) (Tab rtabNew3) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                )
+        
+        rtabNew15fo2_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (FOJoin (TabL rtabNew3) (Tab rtab) $ JoinOn (\t1 t2 -> t1!"Number" == t2!"Number"))
+                )
+
+
+    writeResult fo "_t15_fo.csv" rtmdata15 rtabNew15fo
+    writeResult fo "_t15_fo2.csv" rtmdata15 rtabNew15fo2
+    writeResult fo "_t15_fo_J.csv" rtmdata15 rtabNew15fo_J
+    writeResult fo "_t15_fo2_J.csv" rtmdata15 rtabNew15fo2_J
+        
+
 
 
 -- Test Aggregation
@@ -430,7 +712,28 @@ main = do
                                        []  -- primary key
                                        []  -- list of unique keys
         
+    
+    -- Test Julius
+        rtabNew16_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Agg $ 
+                            AggOn [ Sum "Number" $ As "SumNumber"
+                                    ,Count "Number" $ As "CountNumber"
+                                    ,Avg "Number" $ As "AvgNumber" 
+                                    ,Sum "Name" $ As "SumName"
+                                    ,Max "DNumber" $ As "maxDNumber"
+                                    ,Max "Number" $ As "maxNumber"
+                                    ,Max "Name" $ As "maxName"
+                                    ,Min "DNumber" $ As "minDNumber"
+                                    ,Min "Number" $ As "minNumber"
+                                    ,Min "Name" $ As "minName"
+                                    ,Avg "Name" $ As "AvgName"] $ From $ Tab rtabNew)
+                )
+
     writeResult fo "_t16.csv" rtmdata16 rtabNew16
+    writeResult fo "_t16_J.csv" rtmdata16 rtabNew16_J
 
 
 -- Test GroupBy
@@ -477,9 +780,27 @@ main = do
                                        )   
                                        []  -- primary key
                                        []  -- list of unique keys
+
+    -- Test Julius
+        rtabNew17_J = E.etl $ evalJulius $
+            EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :.  (GroupBy ["Name", "MyTime"] 
+                            (AggOn [ Sum "Number" $ As "SumNumber"
+                                    ,Count "Name" $ As "CountName"
+                                    --,Avg "Number" $ As "AvgNumber" 
+                                    ,Sum "Name" $ As "SumName"
+                                    ,Count "DNumber" $ As "CountDNumber"
+                                    ,Max "DNumber" $ As "maxDNumber"
+                                    --,Max "Number" $ As "maxNumber"
+                                    ,Max "Name" $ As "maxName"]  $ From $ Tab rtabNew)
+                            $ GroupOn (\t1 t2 ->  t1!"Name" == t2!"Name" && t1!"MyTime" == t2!"MyTime"))
+                )
     
   --  print listOfRTupGroupLists
     writeResult fo "_t17.csv" rtmdata17 rtabNew17
+    writeResult fo "_t17_J.csv" rtmdata17 rtabNew17_J
 
 
     --print csvNew2

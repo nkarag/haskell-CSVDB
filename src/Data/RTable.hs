@@ -42,6 +42,7 @@ module Data.RTable
         ,RDataType (..)
         ,ROperation (..)
         ,RAggOperation (..)
+        ,IgnoreDefault (..)
         ,raggSum
         ,raggCount
         ,raggAvg
@@ -51,6 +52,9 @@ module Data.RTable
         ,emptyRTuple
         ,isRTabEmpty
         ,isRTupEmpty
+        ,createSingletonRTable
+        ,getColumnNamesfromRTab
+        ,getColumnNamesfromRTuple
         ,createRDataType
         ,createNullRTuple
         ,createRtuple
@@ -98,7 +102,14 @@ module Data.RTable
         ,rComb
         ,removeColumn
         ,addColumn
+        ,isNull
+        ,isNotNull
         ,nvl
+        ,nvlColValue
+        ,nvlRTuple
+        ,nvlRTable
+        ,decodeColValue
+        ,decodeRTable
     ) where
 
 -- Data.Serialize (Cereal package)  
@@ -128,7 +139,7 @@ import qualified Data.Typeable as TB --(typeOf, Typeable)
 import qualified Data.Dynamic as D  -- https://hackage.haskell.org/package/base-4.9.1.0/docs/Data-Dynamic.html
 
 -- Data.List
-import Data.List (map, zip, zipWith, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, sortBy, foldl', foldr, foldr1, foldl',head)
+import Data.List (all, elem, map, zip, zipWith, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, sortBy, foldl', foldr, foldr1, foldl',head)
 -- Data.Maybe
 import Data.Maybe (fromJust)
 -- Data.Char
@@ -205,6 +216,10 @@ data RDataType =
 -- Null /= _ = False
 -- _ /= Null = False
 -- @
+-- IMPORTANT NOTE:
+--  Of course this means that anywhere in your code where you have something like this x == Null or x /= Null, will always return False and
+-- thus it is futile to do this comparison. You have to use the is isNull function instead.
+--
 instance Eq RDataType where
     RInt i1 == RInt i2 = i1 == i2
     RInt i == _ = False
@@ -216,7 +231,7 @@ instance Eq RDataType where
     RTime t1 == _ = False
     RDouble d1 == RDouble d2 = d1 == d2
     RDouble d1 == _ = False
--- Watch out: NULL logic (anything compared to NULL returns false)
+    -- Watch out: NULL logic (anything compared to NULL returns false)
     Null == Null = False
     _ == Null = False
     Null == _ = False
@@ -225,6 +240,20 @@ instance Eq RDataType where
     _ /= Null = False
     Null /= _ = False
     x /= y = not (x == y) 
+
+-- | Use this function to compare an RDataType with the Null value because deu to Null logic
+--  x == Null or x /= Null, will always return False.
+-- It returns True if input value is Null
+isNull :: RDataType -> Bool
+isNull x = 
+    case x of
+        Null -> True
+        _    -> False
+
+-- | Use this function to compare an RDataType with the Null value because deu to Null logic
+--  x == Null or x /= Null, will always return False.
+-- It returns True if input value is Not Null
+isNotNull = not . isNull
 
 instance Num RDataType where
     (+) (RInt i1) (RInt i2) = RInt (i1 + i2)
@@ -263,18 +292,27 @@ instance Num RDataType where
     negate (RInt i) = RInt (negate i)
     negate (RDouble i) = RDouble (negate i)
     negate _ = Null
+
 -- | Standard date format
 stdDateFormat = "DD/MM/YYYY"
+
+-- | Get the Column Names of an RTable
+getColumnNamesfromRTab :: RTable -> [ColumnName]
+getColumnNamesfromRTab rtab = getColumnNamesfromRTuple $ headRTup rtab
 
 -- | Get the first RTuple from an RTable
 headRTup ::
         RTable
     ->  RTuple
 headRTup = V.head    
+-- | Returns the Column Names of an RTuple
+getColumnNamesfromRTuple :: RTuple -> [ColumnName]
+getColumnNamesfromRTuple t = HM.keys t
 
 
 -- | getRTupColValue :: Returns the value of an RTuple column based on the ColumnName key
---   if the column name is not found, then it returns Null
+--   if the column name is not found, then it returns Null.
+--   Note that this might be confusing since ther might be an existing column name with a Null value    
 getRTupColValue ::
        ColumnName    -- ^ ColumnName key
     -> RTuple        -- ^ Input RTuple
@@ -282,23 +320,114 @@ getRTupColValue ::
 getRTupColValue =  HM.lookupDefault Null
 
 -- | Operator for getting a column value from an RTuple
---   if the column name is not found, then it returns Null
+--   Calls error if this map contains no mapping for the key.
 (<!>) ::
        RTuple        -- ^ Input RTuple
     -> ColumnName    -- ^ ColumnName key
     -> RDataType     -- ^ Output value
-(<!>) = flip getRTupColValue
+(<!>) = -- flip getRTupColValue
+        (HM.!)
 
 
 -- | Returns the 1st parameter if this is not Null, otherwise it returns the 2nd. 
 nvl ::
-       RDataType
-    -> RDataType
-    -> RDataType 
-nvl v1 v2 = 
-    if v1 == Null
-        then v2
-        else v1
+       RDataType  -- ^ input value
+    -> RDataType  -- ^ default value returned if input value is Null
+    -> RDataType  -- ^ output value
+nvl v defaultVal = 
+    if isNull v
+        then defaultVal
+        else v
+
+-- | Returns the value of a specific column (specified by name) if this is not Null. 
+-- If this value is Null, then it returns the 2nd parameter.
+-- If you pass an empty RTuple, then it returns Null.
+-- Calls error if this map contains no mapping for the key.
+nvlColValue ::
+        ColumnName  -- ^ ColumnName key
+    ->  RDataType   -- ^ value returned if original value is Null
+    ->  RTuple      -- ^ input RTuple
+    ->  RDataType   -- ^ output value
+nvlColValue col defaultVal tup = 
+    if isRTupEmpty tup
+        then Null
+        else 
+            case tup <!> col of
+                Null   -> defaultVal
+                val    -> val 
+
+data IgnoreDefault = Ignore | NotIgnore deriving (Eq, Show)
+
+-- | It receives an RTuple and lookups the value at a specfic column name.
+-- Then it compares this value with the specified search value. If it is eaqual to the search value
+-- then it returns the specified Return Value. If not, the it returns the specified default Value (if the ignore indicator is not set).
+-- If you pass an empty RTuple, then it returns Null.
+-- Calls error if this map contains no mapping for the key.
+decodeColValue ::
+        ColumnName  -- ^ ColumnName key
+    ->  RDataType   -- ^ Search value
+    ->  RDataType   -- ^ Return value
+    ->  RDataType   -- ^ Default value   
+    ->  IgnoreDefault -- ^ Ignore default indicator     
+    ->  RTuple      -- ^ input RTuple
+    ->  RDataType
+decodeColValue cname searchVal returnVal defaultVal ignoreInd tup = 
+    if isRTupEmpty tup
+        then Null
+        else 
+            case tup <!> cname of
+                searchVal   -> returnVal
+                v           -> if ignoreInd == Ignore then v else defaultVal 
+
+
+-- | It receives an RTuple and a default value. It returns a new RTuple which is identical to the source one
+-- but every Null value in the specified colummn has been replaced by a default value
+nvlRTuple ::
+        ColumnName  -- ^ ColumnName key
+    ->  RDataType   -- ^ Default value in the case of Null column values
+    ->  RTuple      -- ^ input RTuple    
+    ->  RTuple      -- ^ output RTuple
+nvlRTuple c defaultVal tup  = 
+    if isRTupEmpty tup
+       then emptyRTuple
+       else HM.map (\v -> nvl v defaultVal) tup
+
+
+-- | It receives an RTable and a default value. It returns a new RTable which is identical to the source one
+-- but for each RTuple, for the specified column every Null value in every RTuple has been replaced by a default value
+-- If you pass an empty RTable, then it returns an empty RTable
+-- Calls error if the column does not exist
+nvlRTable ::
+        ColumnName  -- ^ ColumnName key
+    ->  RDataType -- ^ Default value        
+    ->  RTable    -- ^ input RTable
+    ->  RTable
+nvlRTable c defaultVal tab  = 
+    if isRTabEmpty tab
+        then emptyRTable
+        else
+            V.map (\t -> upsertRTuple c (nvlColValue c defaultVal t) t) tab
+            --V.map (\t -> nvlRTuple c defaultVal t) tab    
+
+-- | It receives an RTable, a search value and a default value. It returns a new RTable which is identical to the source one
+-- but for each RTuple, for the specified column:
+--   * if the search value was found then the specified Return Value is returned
+--   * else the default value is returned  (if the ignore indicator is not set)  
+-- If you pass an empty RTable, then it returns an empty RTable
+-- Calls error if the column does not exist
+decodeRTable ::            
+        ColumnName  -- ^ ColumnName key
+    ->  RDataType   -- ^ Search value
+    ->  RDataType   -- ^ Return value
+    ->  RDataType   -- ^ Default value        
+    ->  IgnoreDefault -- ^ Ignore default indicator     
+    ->  RTable      -- ^ input RTable
+    ->  RTable
+decodeRTable cName searchVal returnVal defaultVal ignoreInd tab = 
+    if isRTabEmpty tab
+        then emptyRTable
+        else
+            V.map (\t -> upsertRTuple cName (decodeColValue cName searchVal returnVal defaultVal ignoreInd t) t) tab   
 
 -- | Upsert (update/insert) an RTuple at a specific column specified by name with a value
 -- If the cname key is not found then the (columnName, value) pair is inserted. If it exists
@@ -726,15 +855,18 @@ raggSum src trg = RAggOperation {
 sumFold :: ColumnName -> ColumnName -> RTable -> RDataType
 sumFold src trg rtab =         
     V.foldr' ( \rtup accValue ->                                                                     
-                    if (getRTupColValue src) rtup /= Null && accValue /= Null
+                    --if (getRTupColValue src) rtup /= Null && accValue /= Null
+                    if (isNotNull $ (getRTupColValue src) rtup)  && (isNotNull accValue)
                         then
                             (getRTupColValue src) rtup + accValue
                         else
-                            if (getRTupColValue src) rtup == Null && accValue /= Null 
+                            --if (getRTupColValue src) rtup == Null && accValue /= Null 
+                            if (isNull $ (getRTupColValue src) rtup) && (isNotNull accValue)
                                 then
                                     accValue  -- ignore Null value
                                 else
-                                    if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                    --if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                    if (isNotNull $ (getRTupColValue src) rtup) && (isNull accValue)
                                         then
                                             (getRTupColValue src) rtup + RInt 0  -- ignore so far Null agg result
                                                                                  -- add RInt 0, so in the case of a non-numeric rtup value, the result will be a Null
@@ -759,15 +891,18 @@ raggCount src trg = RAggOperation {
 countFold :: ColumnName -> ColumnName -> RTable -> RDataType
 countFold src trg rtab =         
     V.foldr' ( \rtup accValue ->                                                                     
-                            if (getRTupColValue src) rtup /= Null && accValue /= Null
+                            --if (getRTupColValue src) rtup /= Null && accValue /= Null
+                            if (isNotNull $ (getRTupColValue src) rtup)  && (isNotNull accValue)  
                                 then
                                     RInt 1 + accValue
                                 else
-                                    if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                    --if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                    if (isNull $ (getRTupColValue src) rtup) && (isNotNull accValue)  
                                         then
                                             accValue  -- ignore Null value
                                         else
-                                            if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                            --if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                            if (isNotNull $ (getRTupColValue src) rtup) && (isNull accValue)
                                                 then
                                                     RInt 1  -- ignore so far Null agg result
                                                 else
@@ -808,15 +943,18 @@ raggMax src trg = RAggOperation {
 maxFold :: ColumnName -> ColumnName -> RTable -> RDataType
 maxFold src trg rtab =         
     V.foldr' ( \rtup accValue ->         
-                                if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                --if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                if (isNotNull $ (getRTupColValue src) rtup)  && (isNotNull accValue)  
                                     then
                                         max ((getRTupColValue src) rtup) accValue
                                     else
-                                        if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                        --if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                        if (isNull $ (getRTupColValue src) rtup) && (isNotNull accValue)  
                                             then
                                                 accValue  -- ignore Null value
                                             else
-                                                if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                --if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                if (isNotNull $ (getRTupColValue src) rtup) && (isNull accValue)
                                                     then
                                                         (getRTupColValue src) rtup  -- ignore so far Null agg result
                                                     else
@@ -839,15 +977,18 @@ raggMin src trg = RAggOperation {
 minFold :: ColumnName -> ColumnName -> RTable -> RDataType
 minFold src trg rtab =         
     V.foldr' ( \rtup accValue ->         
-                                if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                --if (getRTupColValue src) rtup /= Null && accValue /= Null
+                                if (isNotNull $ (getRTupColValue src) rtup)  && (isNotNull accValue)
                                     then
                                         min ((getRTupColValue src) rtup) accValue
                                     else
-                                        if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                        --if (getRTupColValue src) rtup == Null && accValue /= Null 
+                                        if (isNull $ (getRTupColValue src) rtup) && (isNotNull accValue)  
                                             then
                                                 accValue  -- ignore Null value
                                             else
-                                                if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                --if (getRTupColValue src) rtup /= Null && accValue == Null 
+                                                if (isNotNull $ (getRTupColValue src) rtup) && (isNull accValue)
                                                     then
                                                         (getRTupColValue src) rtup  -- ignore so far Null agg result
                                                     else
@@ -948,7 +1089,7 @@ isNullRTuple ::
     -> Bool    
 isNullRTuple t = 
     let -- if t is really Null, then the following must return an empty RTuple (since a Null RTuple has all its values equal with Null)
-        checkt = HM.filter (\v -> v /= Null) t 
+        checkt = HM.filter (\v -> isNotNull  v) t  --v /= Null) t 
     in if isRTupEmpty checkt 
             then True
             else False
@@ -1048,7 +1189,7 @@ lJ = runLeftJoin
 -- i.e., the rows of the left RTable will be preserved.
 -- Note that when dublicate keys encountered that is, since the underlying structure for an RTuple is a Data.HashMap.Strict,
 -- only one value per key is allowed. So in the context of joining two RTuples the value of the left RTuple on the common key will be prefered.
-runLeftJoin ::
+{-runLeftJoin ::
     RJoinPredicate
     -> RTable
     -> RTable
@@ -1061,16 +1202,94 @@ runLeftJoin jpred leftRTab rtab = do
             then HM.union rtupLeft rtup
             else HM.union rtupLeft (createNullRTuple colNamesList)
                     where colNamesList = HM.keys rtup
-    return targetRtuple
+    --return targetRtuple
+
+    -- remove repeated rtuples and keep just the rtuples of the preserving rtable
+    iJ (jpred2) (return targetRtuple) leftRTab
+        where 
+            -- the left tuple is the extended (result of the outer join)
+            -- the right tuple is from the preserving table
+            -- we need to return True for those who are equal in the common set of columns
+            jpred2 tL tR = 
+                let left = HM.toList tL
+                    right = HM.toList tR
+                    -- in order to satisfy the join pred, all elements of right must exist in left
+                in  Data.List.all (\(k,v) -> Data.List.elem (k,v) left) right
+-}
+
+-- | Implements a Left Outer Join operation between two RTables (any type of join predicate is allowed),
+-- i.e., the rows of the left RTable will be preserved.
+-- A Left Join :
+-- @ 
+-- tabLeft LEFT JOIN tabRight ON joinPred
+-- @ 
+-- where tabLeft is the preserving table can be defined as:
+-- the Union between the following two RTables:
+--  A. The result of the inner join: tabLeft INNER JOIN tabRight ON joinPred
+--  B. The rows from the preserving table (tabLeft) that DONT satisfy the join condition, enhanced with the columns
+--     of tabRight returning Null values.
+runLeftJoin ::
+    RJoinPredicate
+    -> RTable
+    -> RTable
+    -> RTable
+runLeftJoin jpred preservingTab tab = 
+    let 
+        unionFstPart = iJ jpred preservingTab tab 
+        -- project only the preserving tab's columns
+        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+
+        -- the second part are the rows from the preserving table that dont join
+        -- we will use the Difference operations for this
+        unionSndPart = 
+            let 
+                difftab = d preservingTab unionFstPart
+                -- now enhance the result with the columns of the right table
+            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
+    in u unionFstPart unionSndPart
+
 
 -- | RTable Right Outer Join Operator
 rJ = runRightJoin
+
+-- | Implements a Right Outer Join operation between two RTables (any type of join predicate is allowed),
+-- i.e., the rows of the right RTable will be preserved.
+-- A Right Join :
+-- @ 
+-- tabLeft RIGHT JOIN tabRight ON joinPred
+-- @ 
+-- where tabRight is the preserving table can be defined as:
+-- the Union between the following two RTables:
+--  A. The result of the inner join: tabLeft INNER JOIN tabRight ON joinPred
+--  B. The rows from the preserving table (tabRight) that DONT satisfy the join condition, enhanced with the columns
+--     of tabRight returning Null values.
+runRightJoin ::
+    RJoinPredicate
+    -> RTable
+    -> RTable
+    -> RTable
+runRightJoin jpred tab preservingTab =
+    let 
+        unionFstPart = iJ jpred tab preservingTab
+        -- project only the preserving tab's columns
+        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+
+        -- the second part are the rows from the preserving table that dont join
+        -- we will use the Difference operations for this
+        unionSndPart = 
+            let 
+                difftab = d preservingTab unionFstPart
+                -- now enhance the result with the columns of the left table
+            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
+    in u unionFstPart unionSndPart
+
+
 
 -- | Implements a Right Outer Join operation between two RTables (any type of join predicate is allowed)
 -- i.e., the rows of the right RTable will be preserved.
 -- Note that when dublicate keys encountered that is, since the underlying structure for an RTuple is a Data.HashMap.Strict,
 -- only one value per key is allowed. So in the context of joining two RTuples the value of the right RTuple on the common key will be prefered.
-runRightJoin ::
+{-runRightJoin ::
     RJoinPredicate
     -> RTable
     -> RTable
@@ -1083,7 +1302,7 @@ runRightJoin jpred rtab rightRTab = do
             then HM.union rtupRight rtup
             else HM.union rtupRight (createNullRTuple colNamesList)
                     where colNamesList = HM.keys rtup
-    return targetRtuple
+    return targetRtuple-}
 
 -- | RTable Full Outer Join Operator
 foJ = runFullOuterJoin
@@ -1100,9 +1319,12 @@ runFullOuterJoin jpred leftRTab rightRTab = (lJ jpred leftRTab rightRTab) `u` (r
 -- | RTable Union Operator
 u = runUnion
 
+-- We cannot implement Union like the following (i.e., union of lists) because when two identical RTuples that contain Null values are checked for equality
+-- equality comparison between Null returns always false. So we have to implement our own union using the isNull function.
+
 -- | Implements the union of two RTables as a union of two lists (see 'Data.List').
 -- Duplicates, and elements of the first list, are removed from the the second list, but if the first list contains duplicates, so will the result
-runUnion :: 
+{-runUnion :: 
     RTable
     -> RTable
     -> RTable
@@ -1111,23 +1333,73 @@ runUnion rt1 rt2 =
         ls2 = V.toList rt2
         resultLs = Data.List.union ls1 ls2
     in  V.fromList resultLs
+-}
+
+-- | Implements the union of two RTables as a union of two lists (see 'Data.List').
+runUnion :: 
+    RTable
+    -> RTable
+    -> RTable
+runUnion rt1 rt2 = 
+    -- construct the union result by concatenating the left table with the subset of tuple from the right table that do
+    -- not appear in the left table (i.e, remove dublicates)
+    rt1 V.++ (V.foldr (un) emptyRTable rt2)
+    where
+        un :: RTuple -> RTable -> RTable
+        un tupRight acc = 
+            -- Can we find tupRight in the left table?            
+            if didYouFindIt tupRight rt1 
+                then acc   -- then discard tuplRight ,leave result unchanged          
+                else V.snoc acc tupRight  -- else insert tupRight into final result
+
+
 
 -- | RTable Intersection Operator
 i = runIntersect
 
--- | Implements the intersection of two RTables as an intersection of two lists (see 'Data.List').
+-- | Implements the intersection of two RTables 
 runIntersect :: 
     RTable
     -> RTable
     -> RTable
+runIntersect rt1 rt2 = 
+    -- construct the intersect result by traversing the left table and checking if each tuple exists in the right table
+    V.foldr (intsect) emptyRTable rt1
+    where
+        intsect :: RTuple -> RTable -> RTable
+        intsect tupLeft acc = 
+            -- Can we find tupLeft in the right table?            
+            if didYouFindIt tupLeft rt2 
+                then V.snoc acc tupLeft  -- then insert tupLeft into final result
+                else acc  -- else discard tuplLeft ,leave result unchanged          
+
+{-
 runIntersect rt1 rt2 = 
     let ls1 = V.toList rt1
         ls2 = V.toList rt2
         resultLs = Data.List.intersect ls1 ls2
     in  V.fromList resultLs
 
+-}
+
 -- | RTable Difference Operator
 d = runDiff
+
+-- Test it with this, from ghci:
+-- ---------------------------------
+-- :set -XOverloadedStrings
+-- :m + Data.HashMap.Strict
+--
+-- let t1 = fromList [("c1",RInt 1),("c2", Null)]
+-- let t2 = fromList [("c1",RInt 2),("c2", Null)]
+-- let t3 = fromList [("c1",RInt 3),("c2", Null)]
+-- let t4 = fromList [("c1",RInt 4),("c2", Null)]
+-- :m + Data.Vector
+-- let tab1 = Data.Vector.fromList [t1,t2,t3,t4]
+-- let tab2 = Data.Vector.fromList [t1,t2]
+
+-- > d tab1 tab2
+-- ---------------------------------
 
 -- | Implements the set Difference of two RTables as the diff of two lists (see 'Data.List').
 runDiff :: 
@@ -1135,12 +1407,93 @@ runDiff ::
     -> RTable
     -> RTable
 runDiff rt1 rt2 = 
+    -- construct the diff result by traversing the left table and checking if each tuple exists in the right table
+    V.foldr (diff) emptyRTable rt1
+    where
+        diff :: RTuple -> RTable -> RTable
+        diff tupLeft acc = 
+            -- Can we find tupLeft in the right table?            
+            if didYouFindIt tupLeft rt2 
+                then acc  -- then discard tuplLeft ,leave result unchanged
+                else V.snoc acc tupLeft  -- else insert tupLeft into final result
+
+-- Important Note:
+-- we need to implement are own equality comparison function "areTheyEqual" and not rely on the instance of Eq defined for RDataType above
+-- because of "Null Logic". If we compare two RTuples that have Null values in any column, then these can never be equal, because
+-- Null == Null returns False.
+-- However, in SQL when you run a minus or interesection between two tables containing Nulls, it works! For example:
+-- with q1
+-- as (
+--     select rownum c1, Null c2
+--     from dual
+--     connect by level < 5
+-- ),
+-- q2
+-- as (
+--     select rownum c1, Null c2
+--     from dual
+--     connect by level < 3
+-- )
+-- select *
+-- from q1
+-- minus
+-- select *
+-- from q2
+-- 
+-- q1:
+-- C1  | C2 
+-- ---   ---
+-- 1   |                                      
+-- 2   |                                     
+-- 3   |                                      
+-- 4   |                                     
+--
+-- q2:
+-- C1  | C2 
+-- ---   ---
+-- 1   |                                      
+-- 2   |                                     
+--
+-- And it will return:                
+-- C1  | C2 
+-- ---   ---
+-- 3   |                                      
+-- 4   |                                     
+-- So for Minus and Intersection, when we compare RTuples we need to "bypass" the Null Logic
+didYouFindIt :: RTuple -> RTable -> Bool
+didYouFindIt searchTup tab = 
+    V.foldr (\t acc -> (areTheyEqual searchTup t) || acc) False tab 
+areTheyEqual :: RTuple -> RTuple -> Bool
+areTheyEqual t1 t2 =  -- foldrWithKey :: (k -> v -> a -> a) -> a -> HashMap k v -> a
+    HM.foldrWithKey (accumulator) True t1
+        where 
+            accumulator :: ColumnName -> RDataType -> Bool -> Bool
+            accumulator colName val acc = 
+                case val of
+                    Null -> 
+                            case (t2<!>colName) of
+                                Null -> acc -- -- i.e., True && acc ,if both columns are Null then return equality
+                                _    -> False -- i.e., False && acc
+                    _    -> case (t2<!>colName) of
+                                Null -> False -- i.e., False && acc
+                                _    -> (val == t2<!>colName) && acc -- else compare them as normal
+
+                        -- *** NOTE ***
+                        -- the following piece of code does not work because val == Null always returns False !!!!
+
+                        -- if (val == Null) && (t2<!>colName == Null) 
+                        --     then acc -- i.e., True && acc
+                        --     -- else compare them as normal
+                        --     else  (val == t2<!>colName) && acc
+
+{-
+runDiff rt1 rt2 = 
     let ls1 = V.toList rt1
         ls2 = V.toList rt2
         resultLs = ls1 Data.List.\\ ls2
     in  V.fromList resultLs
-
-
+-}
+            
 rAgg = runAggregation
 
 -- | Implements the aggregation operation on an RTable

@@ -17,9 +17,9 @@ commentary with @some markup@.
 --{-# LANGUAGE OverloadedRecordFields #-}
 --{-# LANGUAGE  DuplicateRecordFields #-}
 
-module Data.RTable.Julius (
-    evalJulius
-    ,ETLMappingExpr (..)
+module Data.RTable.Julius (    
+    ETLMappingExpr (..)
+    ,NamedMap (..)
     ,ETLOpExpr (..)
     ,ColMappingExpr (..)
     ,ToColumn (..)
@@ -39,6 +39,9 @@ module Data.RTable.Julius (
     ,AggOp (..)
     ,AsColumn (..)
     ,GroupOnPred (..)
+    ,evalJulius
+    ,juliusToRTable
+    ,takeNamedResult
     ) where
 
 -- Data.RTable
@@ -52,22 +55,20 @@ import Data.RTable.Etl
 
 -- | An ETL Mapping Expression. It is a chain of individual ETL Operation Expressions. Each
 -- such ETL Operation "acts" on some input RTable and produces a new "transformed" output RTable.
--- an Example:
--- @
---    etl1 :=> etl2 :=> etl3  = 
---    (etl1 :=> (etl2 :=> et3)
--- @
--- So :=> is right associative.
---
--- <ETLMappingExpr> = <ETLOpExpr> { "=>" <ETLOpExpr> } 
---
-infixr 5 :->
+-- The ETL Mapping connector ":->" is left associative because in a ETLMappingExpr operations are evaluated from left to right (or top to bottom)
+infixl 5 :->
+infixl 5 :=>
 data ETLMappingExpr = 
-            EtlMapEmpty
-        |   ETLOpExpr :-> ETLMappingExpr
+            EtlMapStart
+          | ETLMappingExpr :-> ETLOpExpr
+          | ETLMappingExpr :=> NamedMap 
+        -- |   ETLOpExpr :-> ETLMappingExpr
 
 -- | <ETLOpExpr> = "("EtlC" <ColMappingExpr>")" | "("ETLR" <ROpExpr>")"
 data ETLOpExpr = EtlC ColMappingExpr | EtlR ROpExpr
+
+type NamedResultName = String
+data NamedMap = NamedResult NamedResultName ETLOpExpr 
 
 -- | <ColMappingExpr>  =  
 --      "Source" "[" <ColName> {,<ColName>} "]" "Target" "[" <ColName> {,<ColName>} "]" ")" "By" <ColTransformation> "On" <TabExpr> ("Yes"|"No") <ByPred>
@@ -86,12 +87,12 @@ data TabLiteral = TabL RTable
 -- | <ByPred> = "FilterBy" <RPredicate>
 data ByPred = FilterBy RPredicate
 
--- | A relational operator can be composed as in Function Composition with the :. operator
--- <ROpExpr> = "("<RelationalOp>")" { ":." <RelationalOp> } 
-infixr 6 :.
+-- | The relational operation connector ":." is left associative because in a ROpExpr operations are evaluated from left to right (or top to bottom)
+infixl 6 :.
 data ROpExpr =             
-            ROpEmpty
-        |   RelationalOp :. ROpExpr        
+            ROpStart
+        |   ROpExpr :. RelationalOp
+        -- |   RelationalOp :. ROpExpr        
 
 -- | <RelationalOp> = 
 --                  "Filter" "From" <TabExpr> <ByPred>
@@ -123,7 +124,8 @@ data RelationalOp =
         |   TabLiteral `Intersect` TabExpr
         |   TabLiteral `Union` TabExpr
         |   TabLiteral `Minus` TabExpr
-        |   GenUnaryOp OnRTable ByGenUnaryOperation  -- ^ this is a generic unary operation on a RTable
+        |   TabExpr `MinusP` TabLiteral --  ^ This is a Minus operation to be used when the left table must be the "Previous" value.
+        |   GenUnaryOp OnRTable ByGenUnaryOperation  -- ^ This is a generic unary operation on a RTable
         |   GenBinaryOp TabLiteral TabExpr ByGenBinaryOperation -- ^ this is a generic binary operation on a RTable
 
 data ByGenUnaryOperation = ByUnaryOp UnaryRTableOperation         
@@ -195,37 +197,86 @@ myJoinPred3 :: RJoinPredicate
 myJoinPred3 = undefined
 
 -- Empty ETL Mappings
-myEtlExpr1 =  EtlMapEmpty
-myEtlExpr2 =  EtlC ColMappingEmpty :-> EtlMapEmpty
-myEtlExpr3 =  EtlR ROpEmpty :-> EtlMapEmpty
+myEtlExpr1 =  EtlMapStart
+myEtlExpr2 =  EtlMapStart :-> EtlC ColMappingEmpty
+myEtlExpr3 =  EtlMapStart :-> EtlR ROpStart 
 
 -- Simple Relational Operations examples:
 -- Filter => SELECT * FROM myTable WHERE myFpred
-myEtlExpr4 = (EtlR $ (Filter (From $ Tab myTable) $ FilterBy myFpred) :. ROpEmpty)
+myEtlExpr4 =    EtlMapStart 
+            :-> (EtlR $ 
+                        ROpStart
+                    :.  (Filter (From $ Tab myTable) $ FilterBy myFpred))
+--(EtlR $ (Filter (From $ Tab myTable) $ FilterBy myFpred) :. ROpStart)
+
 -- Projection  => SELECT col1, col2, col3 FROM myTable
-myEtlExpr5 = (EtlR $ (Select ["col1", "col2", "col3"] $ From $ Tab myTable) :. ROpEmpty)
+myEtlExpr5 =        EtlMapStart
+                :-> (EtlR $
+                            ROpStart
+                        :.  (Select ["col1", "col2", "col3"] $ From $ Tab myTable))  
+
+    --(EtlR $ (Select ["col1", "col2", "col3"] $ From $ Tab myTable) :. ROpStart)
+
 -- Filter then Projection => SELECT col1, col2, col3 FROM myTable WHERE myFpred
-myEtlExpr51 = (EtlR $       (Select ["col1", "col2", "col3"] $ From $ Tab myTable)
-                        :.  (Filter (From $ Tab myTable) $ FilterBy myFpred) 
-                        :.  ROpEmpty
-              )
+myEtlExpr51 =       EtlMapStart
+                :-> (EtlR $
+                            ROpStart
+                        :.  (Filter (From $ Tab myTable) $ FilterBy myFpred)
+                        :.  (Select ["col1", "col2", "col3"] $ From $ Tab myTable))
+
+            -- (EtlR $       (Select ["col1", "col2", "col3"] $ From $ Tab myTable)
+            --             :.  (Filter (From $ Tab myTable) $ FilterBy myFpred) 
+            --             :.  ROpStart
+            --   )
+
 -- Aggregation  => SELECT sum(trgCol2) as trgCol2Sum FROM myTable
-myEtlExpr6 = (EtlR $ (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From $ Tab myTable) :. ROpEmpty)
+
+myEtlExpr6 =        EtlMapStart
+                :-> (EtlR $
+                            ROpStart
+                        :.  (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From $ Tab myTable))
+
+    --(EtlR $ (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From $ Tab myTable) :. ROpStart)
+
 -- Group By  => SELECT col1, col2, col3, sum(col4) as col4Sum, max(col4) as col4Max FROM myTable GROUP BY col1, col2, col3
-myEtlExpr7 = (EtlR $ (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From $ Tab myTable) $ GroupOn myGpred) :. ROpEmpty)
+myEtlExpr7 =    EtlMapStart
+            :-> (EtlR $
+                    ROpStart
+                    :. (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From $ Tab myTable) $ GroupOn myGpred))
+
+
+    --(EtlR $ (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From $ Tab myTable) $ GroupOn myGpred) :. ROpStart)
+
 -- Inner Join => SELECT * FROM myTable JOIN myTable2 ON (myJoinPred)
-myEtlExpr8 = --(EtlR $ ( (Tab myTable) `Join` (Tab myTable2 `JoinOn` myJoinPred) ) :. ROpEmpty)
-            (EtlR $ (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) :. ROpEmpty)
+myEtlExpr8 =    EtlMapStart
+                :-> (EtlR $
+                        ROpStart
+                        :. (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) )
+
+--            (EtlR $ (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) :. ROpStart)
 
 -- A 3-way Inner Join => SELECT * FROM myTable JOIN myTable2 ON (myJoinPred) JOIN myTable3 ON (myJoinPred2) JOIN ON myTable4 ON (myJoinPred4)
-myEtlExpr9 = --(EtlR $ ( (Tab myTable) `Join` (Tab myTable2 `JoinOn` myJoinPred) ) :. ROpEmpty)
-            (EtlR $    (Join (TabL myTable4) Previous $ JoinOn myJoinPred3)
-                    :. (Join (TabL myTable3) Previous $ JoinOn myJoinPred2)
-                    :. (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) 
-                    :. ROpEmpty
-            )            
+myEtlExpr9 =    EtlMapStart
+                :-> (EtlR $
+                        ROpStart
+                        :.  (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred)
+                        :.  (Join (TabL myTable3) Previous $ JoinOn myJoinPred2)
+                        :.  (Join (TabL myTable4) Previous $ JoinOn myJoinPred3))
+
+            -- (EtlR $    (Join (TabL myTable4) Previous $ JoinOn myJoinPred3)
+            --         :. (Join (TabL myTable3) Previous $ JoinOn myJoinPred2)
+            --         :. (Join (TabL myTable) (Tab myTable2) $ JoinOn myJoinPred) 
+            --         :. ROpStart
+            -- )      
+
+
 -- Union => SELECT * FROM myTable UNION SELECT * FROM myTable2
-myEtlExpr10 = (EtlR $ (Union (TabL myTable) (Tab myTable2)) :. ROpEmpty)
+myEtlExpr10 =   EtlMapStart
+                :-> (EtlR $
+                        ROpStart
+                        :.  (Union (TabL myTable) (Tab myTable2)))
+
+--    (EtlR $ (Union (TabL myTable) (Tab myTable2)) :. ROpStart)
 
 -- A more general example of an ETL mapping including column mappings and relational operations:
 -- You read the Julius expression from bottom to top, and results to the follwoing discrete processing steps:      
@@ -237,25 +288,72 @@ myEtlExpr10 = (EtlR $ (Union (TabL myTable) (Tab myTable2)) :. ROpEmpty)
 --  ->  An aggregation: SELECT SUM(trgCol2) as trgCol2Sum FROM <previous result>
 --  ->  A 1xN column mapping based on myTransformation2 
 myEtlExpr :: ETLMappingExpr
-myEtlExpr =
-         (EtlC $ Source ["trgCol2Sum"] $ Target ["newCol1", "newCol2"] $ By myTransformation2 (On Previous) DontRemoveSrc $ FilterBy myFpred2) 
-     :-> (EtlR $ (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From Previous) :. ROpEmpty )
-     :-> (EtlC $ Source ["tgrCol"] $ Target ["trgCol2"] $ By myTransformation (On Previous) RemoveSrc $ FilterBy myFpred2)
-     :-> (EtlR $
-                -- You read it from bottom to top
-             (Select ["col1", "col2", "col3", "col4Sum"] $ From Previous) 
-             :. (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From Previous) $ GroupOn myGpred) 
-             :. (Filter (From Previous) $ FilterBy myFpred)
-             :. ROpEmpty
-         )
-     :-> (EtlC $ Source ["srcCol"] $ Target ["trgCol"] $ By myTransformation (On $ Tab myTable) DontRemoveSrc $ FilterBy myFpred2)         
-     :-> EtlMapEmpty
+myEtlExpr = EtlMapStart
+            :-> (EtlC $ Source ["srcCol"] $ Target ["trgCol"] $ By myTransformation (On $ Tab myTable) DontRemoveSrc $ FilterBy myFpred2)         
+            :-> (EtlR $
+                    ROpStart
+                    :.  (Filter (From Previous) $ FilterBy myFpred)                     
+                    :.  (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From Previous) $ GroupOn myGpred) 
+                    :.  (Select ["col1", "col2", "col3", "col4Sum"] $ From Previous)                    
+                 )
+            :-> (EtlC $ Source ["tgrCol"] $ Target ["trgCol2"] $ By myTransformation (On Previous) RemoveSrc $ FilterBy myFpred2)
+            :-> (EtlR $ ROpStart :. (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From Previous))
+            :-> (EtlC $ Source ["trgCol2Sum"] $ Target ["newCol1", "newCol2"] $ By myTransformation2 (On Previous) DontRemoveSrc $ FilterBy myFpred2) 
 
+     --     (EtlC $ Source ["trgCol2Sum"] $ Target ["newCol1", "newCol2"] $ By myTransformation2 (On Previous) DontRemoveSrc $ FilterBy myFpred2) 
+     -- :-> (EtlR $ (Agg $ AggOn [Sum "trgCol2" $ As "trgCol2Sum"] $ From Previous) :. ROpStart )
+     -- :-> (EtlC $ Source ["tgrCol"] $ Target ["trgCol2"] $ By myTransformation (On Previous) RemoveSrc $ FilterBy myFpred2)
+     -- :-> (EtlR $
+     --            -- You read it from bottom to top
+     --         (Select ["col1", "col2", "col3", "col4Sum"] $ From Previous) 
+     --         :. (GroupBy  ["col1", "col2", "col3"] (AggOn [Sum "col4" $ As "col4Sum", Max "col4" $ As "col4Max"] $ From Previous) $ GroupOn myGpred) 
+     --         :. (Filter (From Previous) $ FilterBy myFpred)
+     --         :. ROpStart
+     --     )
+     -- :-> (EtlC $ Source ["srcCol"] $ Target ["trgCol"] $ By myTransformation (On $ Tab myTable) DontRemoveSrc $ FilterBy myFpred2)         
+     -- :-> EtlMapStart
+
+-- | Returns a prefix of an ETLMappingExpr that matches a named intermediate result.
+-- For example, below we show a Julius expression where we define an intermediate named result called "myResult".
+-- This result, is used at a later stage in this Julius expression, with the use of the function takeNamedResult.
+-- @
+--        etlXpression = 
+--                    EtlMapStart
+--                    :-> (EtlC $ ...)                
+--                    :=> NamedResult "myResult" (EtlR $ ...) 
+--                    :-> (EtlR $ ... )
+--                    :-> (EtlR $
+--                            ROpStart
+--                            :.  (Minus 
+--                                    (TabL $ 
+--                                        juliusToRTable $ takeNamedResult "myResult" etlXpression    --  THIS IS THE POINT WHERE WE USE THE NAMED RESULT!
+--                                    ) 
+--                                    (Previous))
+--                        )
+--      
+--      takeNamedResult "myResult" etlXpression ==  EtlMapStart
+--                                                  :-> (EtlC $ ...)                
+--                                                  :=> NamedResult "myResult" (EtlR $ ...) 
+--
+-- @
+--
+-- Note that the julius expression is scanned from right to left and thus it will return the longest prefix expression that matches the input name
+-- 
+takeNamedResult :: 
+        NamedResultName -- ^ the name of the intermediate result
+    ->  ETLMappingExpr   -- ^ input ETLMapping Expression
+    ->  ETLMappingExpr   -- ^ output ETLMapping Expression
+takeNamedResult _ EtlMapStart = EtlMapStart
+takeNamedResult rname (restExpression :-> etlOpXpr) = takeNamedResult rname restExpression
+takeNamedResult rname (restExpression :=> NamedResult n etlOpXpr) = 
+    if rname == n 
+        then (restExpression :=> NamedResult n etlOpXpr)
+        else takeNamedResult rname restExpression
 
 -- | Evaluates (parses) the Julius DSL and produces an ETLMapping
 evalJulius :: ETLMappingExpr -> ETLMapping
-evalJulius EtlMapEmpty = ETLMapEmpty
-evalJulius ((EtlC colMapExpression) :-> restExpression) = 
+evalJulius EtlMapStart = ETLMapEmpty
+evalJulius (restExpression :-> (EtlC colMapExpression)) = 
     case colMapExpression of
         ColMappingEmpty 
             -> connectETLMapLD ETLcOp {cmap = ColMapEmpty} emptyRTable (evalJulius restExpression)  -- (evalJulius restExpression) returns the previous ETLMapping 
@@ -269,7 +367,37 @@ evalJulius ((EtlC colMapExpression) :-> restExpression) =
            in connectETLMapLD ETLcOp {cmap = createColMapping srcColumns trgColumns colXformation removeOption filterPred}
                               emptyRTable -- right branch
                               prevMapping -- left branch
-evalJulius ((EtlR relOperExpression) :-> restExpression) = 
+evalJulius (restExpression :=> NamedResult rname (EtlC colMapExpression)) = 
+    case colMapExpression of
+        ColMappingEmpty 
+            -> connectETLMapLD ETLcOp {cmap = ColMapEmpty} emptyRTable (evalJulius restExpression)  -- (evalJulius restExpression) returns the previous ETLMapping 
+        Source srcColumns (Target trgColumns (By colXformation (On tabExpr) removeSource (FilterBy filterPred))) 
+            -> let  prevMapping = case tabExpr of
+                        Tab tab -> rtabToETLMapping tab -- make the RTable an ETLMapping (this is a leaf node)
+                        Previous -> evalJulius restExpression  
+                    removeOption = case removeSource of 
+                        RemoveSrc -> Yes 
+                        DontRemoveSrc -> No
+           in connectETLMapLD ETLcOp {cmap = createColMapping srcColumns trgColumns colXformation removeOption filterPred}
+                              emptyRTable -- right branch
+                              prevMapping -- left branch
+evalJulius (restExpression :-> (EtlR relOperExpression)) = 
+    let (roperation, leftTabExpr, rightTabExpr) = evalROpExpr relOperExpression
+        (prevMapping, rightBranch)  = case (leftTabExpr, rightTabExpr) of
+            -- binary operation (leaf)
+            (TXE (Tab tab1), TXE (Tab tab2)) -> (rtabToETLMapping tab1, tab2)
+            -- binary operation (no leaf)
+            (TXE Previous, TXE (Tab tab)) -> (evalJulius restExpression, tab)
+            -- unary operation (leaf) - option 1
+            (TXE (Tab tab), EmptyTab) -> (rtabToETLMapping tab, emptyRTable)
+            -- unary operation (leaf) - option 2
+            (EmptyTab, TXE (Tab tab)) -> (ETLMapEmpty, tab)
+            -- unary operation (no leaf) 
+            (TXE Previous, EmptyTab) -> (evalJulius restExpression, emptyRTable)
+            -- everything else is just wrong!! Do nothing
+            (_, _) -> (ETLMapEmpty, emptyRTable)
+    in connectETLMapLD ETLrOp {rop = roperation} rightBranch prevMapping  -- (evalJulius restExpression) returns the previous ETLMapping 
+evalJulius (restExpression :=> NamedResult rname (EtlR relOperExpression)) = 
     let (roperation, leftTabExpr, rightTabExpr) = evalROpExpr relOperExpression
         (prevMapping, rightBranch)  = case (leftTabExpr, rightTabExpr) of
             -- binary operation (leaf)
@@ -287,20 +415,24 @@ evalJulius ((EtlR relOperExpression) :-> restExpression) =
     in connectETLMapLD ETLrOp {rop = roperation} rightBranch prevMapping  -- (evalJulius restExpression) returns the previous ETLMapping 
 
 
+-- | Receives an input ETL Mapping expression, evaluates it to an ETL Mapping and executes it, in order to return an RTable storing the result of the ETL Mapping
+juliusToRTable :: ETLMappingExpr -> RTable
+juliusToRTable = etl . evalJulius
+
 -- | We use this data type in order to identify unary vs binary operations and if the table is coming from the left or right branch
 data TabExprEnhanced = TXE TabExpr | EmptyTab
 
 -- | Evaluates (parses) a Relational Operation Expression of the form 
 -- @
---  ROp :. ROp :. ... :. ROpEmpty
+--  ROp :. ROp :. ... :. ROpStart
 -- @
 -- and produces the corresponding ROperation data type.
 -- This will be an RCombinedOp relational operation that will be the composition of all relational operators
 -- in the ROpExpr. In the returned result the TabExpr corresponding to the left and right RTable inputs to the ROperation
 -- respectively, are also returned.
 evalROpExpr :: ROpExpr -> (ROperation, TabExprEnhanced, TabExprEnhanced)
-evalROpExpr ROpEmpty = (ROperationEmpty, EmptyTab, EmptyTab)
-evalROpExpr (rop :. restExpression) = 
+evalROpExpr ROpStart = (ROperationEmpty, EmptyTab, EmptyTab)
+evalROpExpr (restExpression :. rop) = 
     case rop of
         Filter (From tabExpr) (FilterBy filterPred) ->
             let -- create current function to be included in a RCombinedOp operation 
@@ -446,6 +578,21 @@ evalROpExpr (rop :. restExpression) =
             let -- create current function to be included in a RCombinedOp operation 
                 currfunc :: UnaryRTableOperation
                 currfunc = d tabl -- this returns a RTable -> RTable function
+                -- get previous RCombinedOp operation and table expressions
+                (prevOperation, prevTXEleft, prevTXEright) = evalROpExpr restExpression                                
+
+            -- the current RCombinedOp is porduced by composing the current function with the previous function
+            in case prevOperation of
+                    -- in this case the previous operation is a valid non-empty operation and must be composed with the current one
+                    RCombinedOp {rcombOp = prevfunc} -> (RCombinedOp {rcombOp = currfunc . prevfunc}, prevTXEleft, EmptyTab)
+                    -- in this case the current Operation is the last one (the previous is just empty and must be ignored)
+                    ROperationEmpty ->  (RCombinedOp {rcombOp = currfunc}, TXE tabExpr, EmptyTab)
+
+        -- TabExpr `MinusP` TabLiteral
+        MinusP tabExpr (TabL tabl) ->
+            let -- create current function to be included in a RCombinedOp operation 
+                currfunc :: UnaryRTableOperation
+                currfunc = (flip d) tabl -- this returns a RTable -> RTable function, note that flip ensures that left table will be the second argument in d function
                 -- get previous RCombinedOp operation and table expressions
                 (prevOperation, prevTXEleft, prevTXEright) = evalROpExpr restExpression                                
 

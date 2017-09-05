@@ -1,8 +1,14 @@
--- IN PROGRESS
+============================
+== IN PROGRESS
+============================
 
-<<<20170801		Implement function:	
-					evalJulius :: ETLMappingExpr -> ETLMapping 
-					Finish Testing
+
+<<<20170810		Start a new branch and experiment with 
+					*a top-to-bottom (left-to-right) Julius syntax as well as --> DONE
+					*a new syntax that allows to name intermediate results in a chain of ETLMappings and refer to this name as a table (Tab name) at a later ETLMapping. --> DONE
+					*update readme.md --> DONE
+					* merge git branch to master
+					
 
 					
 <<<20170427		implement 
@@ -15,10 +21,9 @@
 					* Merge operations 
 				with Data.List groupby and nubby functions
 
--- OPEN (Not Started)
-<<<20170810		Start a new branch and experiment with 
-					*a top-to-bottom (left-to-right) Julius syntax as well as 
-					*a new syntax that allows to name intermediate results in a chain of ETLMappings and refer to this name as a table (Tab name) at a later ETLMapping. 
+============================
+== OPEN (Not Started)
+============================
 
 <<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
 				in order to implement an SQL command line interface over CSVs
@@ -31,7 +36,7 @@
 <<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
 				We must be able to pattern match on these commands. Basically we need the following functions:
 
-					parseCommand :: Text -> Command -- Parse user input (Text) and trasnfrom it into a structured Command data type
+					parseCommand :: Text -> Command -- Parse user input (Text) and transform it into a structured Command data type
 					parsePredicate :: Text -> Predicate  -- Parse user input (Text) and transform it into a structured Predicate data type
 															 -- a predicate is an expression of filter and/or join predicates connected by Logical Operations
 
@@ -46,8 +51,52 @@
 
 <<<20170421		Check SQL parser at: http://jakewheat.github.io/simple-sql-parser/latest/
 
+============================
+== COMPLETED
+============================
 
--- COMPLETED
+<<<20170825		Test Full Outer Join
+20170828>>> (Completion)
+
+<<<20170811		Problem with Minus and Julius (the left table cannot be a previous ETL mapping, it must always be an explicit RTable)
+				Test MinusP
+20170828>>> (Completion)
+
+<<<20170801		Implement function:	
+					evalJulius :: ETLMappingExpr -> ETLMapping 
+					Finish Testing
+20170825>>> (Completion)
+
+<<<20170825		- Implement "Null Logic" for RDataTypes. Create an Eq Instance of RDataType and make == and /= comparison with Null to return always False.
+				- Then create separate isNull :: RDataType -> Bool and isNotNull = not.isNull functions to be used whenever you need to make such comparisons
+				- Rengineer code where == or /= comparison with Null appears and change it to use isNull or isNotNull
+20170825>>> (Completion)
+
+
+<<<20170811		Left Join (OK) and Right Join (OK) dont work correctly (also Diff (OK) and Intersection (OK) due to Null Logic)
+				See the correct one:
+
+				with rtab
+				as (
+				    select dummy, rownum x
+				    from dual
+				    connect by level < 3
+				),
+				ltab
+				as(
+				select dummy, rownum + 1 as y
+				    from dual
+				    connect by level < 4
+				)
+				select *
+				from ltab left join rtab on (x = y)
+
+				DUMMY Y                                      DUMMY_1 X                                      
+				X     2                                      X       2                                      
+				X     3                                                                                     
+				X     4                                                                                     
+20170825>>> (Completion)
+
 <<<20170808		Implement full outer join, simply as: (right join) union (left join)
 20170808>>> (Completion)
 
