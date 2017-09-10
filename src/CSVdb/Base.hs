@@ -31,8 +31,9 @@ module CSVdb.Base
    (
         CSV 
         ,Row
-        ,Column 
+        ,Column                 
         ,readCSV
+        ,readCSVwithOptions
         ,readCSVFile
         ,writeCSV
         ,writeCSVFile
@@ -47,6 +48,8 @@ module CSVdb.Base
         --,rtable2csv
         ,csvHeaderFromRtable
         ,projectByIndex
+        ,CSVOptions(..)
+        ,YesNo (..)
     ) where
 {--        ,addColumn
         ,dropColumn
@@ -113,6 +116,8 @@ import Data.Serialize (decode, encode)
 import qualified Data.Typeable as TB --(typeOf, Typeable)
 
 import Data.Either.Combinators (fromRight')
+
+import Data.Char (ord)
 
 {--  
 
@@ -192,6 +197,35 @@ readCSV f = do
                 Right csv -> csv            --Right (hdr, csv) -> csv
         --}        
     return csvResult
+
+data YesNo = Yes | No
+
+data CSVOptions = CSVOptions {
+        delimiter :: Char
+        ,hasHeader :: YesNo
+}
+
+-- | readCSVwithOptions: reads a CSV file based on input options (delimiter and header option) and returns a CSV data type (Treating CSV data as opaque byte strings)
+readCSVwithOptions ::
+        CSVOptions 
+    ->  FilePath  -- ^ the CSV file
+    ->  IO CSV  -- ^ the output CSV type
+readCSVwithOptions opt f = do
+    csvData <- BL.readFile f     
+    let csvoptions = CV.defaultDecodeOptions {
+                                            CV.decDelimiter = fromIntegral $ ord (delimiter opt)
+                     }
+        csvResult = fromRight' $ 
+                        CV.decodeWith   csvoptions 
+
+                                        (case (hasHeader opt) of 
+                                            Yes -> CV.HasHeader
+                                            No  -> CV.NoHeader)
+
+                                        csvData
+
+    return csvResult
+
 
 
 -- | writeCSVFile: write a CSV (bytestring) to a newly created csv file
@@ -632,4 +666,13 @@ projectByIndex ::
              [Int]  -- ^ input list of column indexes
           -> CSV    -- ^ input csv
           -> CSV    -- ^ output CSV
-projectByIndex = undefined
+projectByIndex inds icsv = 
+    V.foldr (prj) V.empty icsv
+    where
+        prj :: Row -> CSV -> CSV
+        prj row acc = 
+            let 
+                -- construct new row including only projected columns
+                newrow = V.fromList $ Data.List.map (\i -> row V.! i) inds
+            in -- add new row in result vector
+                V.snoc acc newrow

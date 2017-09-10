@@ -1,15 +1,6 @@
 ============================
 == IN PROGRESS
 ============================
-
-
-<<<20170810		Start a new branch and experiment with 
-					*a top-to-bottom (left-to-right) Julius syntax as well as --> DONE
-					*a new syntax that allows to name intermediate results in a chain of ETLMappings and refer to this name as a table (Tab name) at a later ETLMapping. --> DONE
-					*update readme.md --> DONE
-					* merge git branch to master
-					
-
 					
 <<<20170427		implement 
 					* (DONE) GroupBy and (DONE) Aggregation
@@ -54,6 +45,25 @@
 ============================
 == COMPLETED
 ============================
+<<<20170907
+			Implement CSV reading with options (various delimiter characters and header/noHeader) (in Base.hs)
+			Impement projection by index over CSV files (in Base.hs)
+20170907>>> (Completion)
+
+GIT (master)
+	commit c15a14920764e7ca4f0f0e98d457a4ae9767dcb0
+	Author: Karagiannidis Nikolaos <nkarag@central-domain.root.ote.gr>
+	Date:   Tue Sep 5 17:59:04 2017 +0300
+
+    Julius works top-to-bottom. Outer joins, as well as Difference and Intersection have been fixed to work, due to problem with Null logic (equality comparison with Null, always returns False)
+		    
+<<<20170810		Start a new branch and experiment with 
+					*a top-to-bottom (left-to-right) Julius syntax as well as --> DONE
+					*a new syntax that allows to name intermediate results in a chain of ETLMappings and refer to this name as a table (Tab name) at a later ETLMapping. --> DONE
+					*update readme.md --> DONE
+					* merge git branch to master --> DONE
+
+20170905>>> (Completion)
 
 <<<20170825		Test Full Outer Join
 20170828>>> (Completion)
