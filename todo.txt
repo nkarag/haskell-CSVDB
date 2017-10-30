@@ -16,6 +16,15 @@
 == OPEN (Not Started)
 ============================
 
+<<<20171027		Create a new git branch and implement a new data type: 
+				newtype RTabResult = Writer Numrows RTable
+				type Numrows = Int
+
+				then you must change all functions doing operations on RTables and returning an RTable, to ones returning a RTabResult.
+				The RTabResults includes apart from the resulting RTable, also the number of rows affected by the operation in question (as a log).
+
+<<<20170918		Make basic Data Types strict based on: https://www.fpcomplete.com/blog/2017/09/all-about-strictness
+
 <<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
 				in order to implement an SQL command line interface over CSVs
 

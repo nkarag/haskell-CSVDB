@@ -626,7 +626,7 @@ evalROpExpr (restExpression :. rop) =
                 -- get previous RCombinedOp operation and table expressions
                 (prevOperation, prevTXEleft, prevTXEright) = evalROpExpr restExpression                                
 
-            -- the current RCombinedOp is porduced by composing the current function with the previous function
+            -- the current RCombinedOp is produced by composing the current function with the previous function
             in case prevOperation of
                     -- in this case the previous operation is a valid non-empty operation and must be composed with the current one
                     RCombinedOp {rcombOp = prevfunc} -> (RCombinedOp {rcombOp = currfunc . prevfunc}, prevTXEleft, EmptyTab)

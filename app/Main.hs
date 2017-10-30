@@ -15,7 +15,7 @@ import Data.RTable.Julius
 --import RTable
 --import QProcessor
 --import System.IO
-import System.Environment (getArgs)
+import System.Environment (getArgs, setEnv)
 import Data.Char (toLower)
 import Data.HashMap.Strict ((!))
 -- Data.Maybe
@@ -28,15 +28,23 @@ import Data.Vector (toList)
 import Data.List (groupBy)
 
 -- Test command:  stack exec -- csvdb ./misc/test.csv 20 ./misc/testo.csv
+-- or, if you want to test with non-default csv options: 
+-- stack exec -- csvdb ./misc/test_options.csv 20 ./misc/testo.csv
 
 main :: IO ()
 main = do
+    --setEnv "NLS_LANG" "Greek_Greece.UTF8"  
+
     args <- getArgs
     let fi = args!!0
         n = args!!1
         fo = args!!2
     --csv <- C.readCSVFile fi
-    csv <- C.readCSV fi
+    
+    --csv <- C.readCSV fi
+    let myoptions = C.CSVOptions { C.delimiter = ';', C.hasHeader = C.Yes}
+    csv <- C.readCSVwithOptions myoptions fi
+    
     
     -- debug
     {-- 

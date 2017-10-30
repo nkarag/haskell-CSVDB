@@ -33,7 +33,7 @@ library
                       , cereal
                       -- Data.Either.Combinators (https://hackage.haskell.org/package/either-4.4.1.1/docs/Data-Either-Combinators.html)
                       , either      
-                      , simple-sql-parser    
+                    -- , simple-sql-parser    
   default-language:    Haskell2010
 
 executable csvdb

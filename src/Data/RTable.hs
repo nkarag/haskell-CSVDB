@@ -14,9 +14,11 @@ commentary with @some markup@.
 
 {-# LANGUAGE OverloadedStrings #-}
 -- :set -XOverloadedStrings
-{-# LANGUAGE RecordWildCards #-}
 --  :set -XRecordWildCards
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}  -- In order to be able to derive from non-standard derivable classes (such as Num)
+{-# LANGUAGE GeneralizedNewtypeDeriving 
+            ,BangPatterns
+            ,RecordWildCards 
+#-}  -- In order to be able to derive from non-standard derivable classes (such as Num)
 
 -- {-# LANGUAGE  DuplicateRecordFields #-}
 
@@ -111,6 +113,8 @@ module Data.RTable
         ,decodeColValue
         ,decodeRTable
     ) where
+
+import Debug.Trace
 
 -- Data.Serialize (Cereal package)  
 --                                  https://hackage.haskell.org/package/cereal
@@ -241,7 +245,7 @@ instance Eq RDataType where
     Null /= _ = False
     x /= y = not (x == y) 
 
--- | Use this function to compare an RDataType with the Null value because deu to Null logic
+-- | Use this function to compare an RDataType with the Null value because due to Null logic
 --  x == Null or x /= Null, will always return False.
 -- It returns True if input value is Null
 isNull :: RDataType -> Bool
@@ -527,8 +531,22 @@ rTimeStampToRText ::
     String  -- ^ Output format e.g., DD/MM/YYYY HH24:MI:SS
     -> RTimestamp -- ^ Input RTimestamp 
     -> RDataType  -- ^ Output RText
-rTimeStampToRText stdTimestampFormat ts = let timeString = show (day ts) ++ "/" ++ show (month ts) ++ "/" ++ show (year ts) ++ " " ++ show (hours24 ts) ++ ":" ++ show (minutes ts) ++ ":" ++ show (seconds ts)
-                                                    in RText $ T.pack timeString
+rTimeStampToRText "DD/MM/YYYY HH24:MI:SS" ts =  let -- timeString = show (day ts) ++ "/" ++ show (month ts) ++ "/" ++ show (year ts) ++ " " ++ show (hours24 ts) ++ ":" ++ show (minutes ts) ++ ":" ++ show (seconds ts)
+                                                    timeString = expand (day ts) ++ "/" ++ expand (month ts) ++ "/" ++ expand (year ts) ++ " " ++ expand (hours24 ts) ++ ":" ++ expand (minutes ts) ++ ":" ++ expand (seconds ts)
+                                                    expand i = if i < 10 then "0"++ (show i) else show i
+                                                in RText $ T.pack timeString
+rTimeStampToRText "YYYYMMDD-HH24.MI.SS" ts =    let -- timeString = show (year ts) ++ show (month ts) ++ show (day ts) ++ "-" ++ show (hours24 ts) ++ "." ++ show (minutes ts) ++ "." ++ show (seconds ts)
+                                                    timeString = expand (year ts) ++ expand (month ts) ++ expand (day ts) ++ "-" ++ expand (hours24 ts) ++ "." ++ expand (minutes ts) ++ "." ++ expand (seconds ts)
+                                                    expand i = if i < 10 then "0"++ (show i) else show i
+                                                    {-
+                                                    !dummy1 = trace ("expand (year ts) : " ++ expand (year ts)) True
+                                                    !dummy2 = trace ("expand (month ts) : " ++ expand (month ts)) True
+                                                    !dummy3 =  trace ("expand (day ts) : " ++ expand (day ts)) True
+                                                    !dummy4 = trace ("expand (hours24 ts) : " ++ expand (hours24 ts)) True
+                                                    !dummy5 = trace ("expand (minutes ts) : " ++ expand (minutes ts)) True
+                                                    !dummy6 = trace ("expand (seconds ts) : " ++ expand (seconds ts)) True-}
+                                                in RText $ T.pack timeString
+
 
 -- | Metadata for an RTable
 data RTableMData =  RTableMData {

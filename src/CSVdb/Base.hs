@@ -67,6 +67,7 @@ module CSVdb.Base
 --      in order to see the exact versions of the packages the CSVdb depends on
 --------------
 
+import Debug.Trace
 
 import Data.RTable
 
@@ -96,7 +97,7 @@ import  Data.ByteString.Lazy.Char8 (putStr)--as BLW
 
 -- Text
 import Data.Text as T
-import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.Text.Encoding (decodeUtf8, encodeUtf8, decodeUtf8', decodeUtf16LE)
 
 -- Vector
 import qualified Data.Vector as V 
@@ -187,7 +188,22 @@ readCSV ::
     -> IO CSV  -- ^ the output CSV type
 readCSV f = do
     csvData <- BL.readFile f     
-    let csvResult = fromRight' $ CV.decode CV.HasHeader csvData
+{-    csvDataBS <- BL.readFile f     
+    let 
+        --decodeUtf8' :: ByteString -> Either UnicodeException Text
+        utf8text = case decodeUtf8' (BL.toStrict csvDataBS) of
+            Left exc -> error $ "Error in decodeUtf8' the whole ByteString from Data.ByteString.Lazy.readFile: " ++ (show exc)
+            Right t  -> t
+        -- Note that I had to make sure to use encodeUtf8 on a literal of type Text rather than just using a ByteString literal directly to Cassava
+        -- because The IsString instance for ByteStrings, which is what's used to convert the literal to a ByteString, truncates each Unicode code point
+        -- see : https://stackoverflow.com/questions/26499831/parse-csv-tsv-file-in-haskell-unicode-characters
+        csvData = encodeUtf8 utf8text  -- encodeUtf8 :: Text -> ByteString
+-}
+    let
+        csvResult = -- fromRight' $ CV.decode CV.HasHeader csvData
+            case CV.decode CV.HasHeader csvData of
+                Left str -> error $ "Error in decoding CSV file " ++ f ++ ": " ++ str
+                Right res -> res
         {--
         case CV.decode CV.HasHeader csvData of   --CV.decodeByName csvData of
                 Left err -> let errbs = encode (err::String) -- BL.pack err  -- convert String to ByteString
@@ -215,7 +231,17 @@ readCSVwithOptions opt f = do
     let csvoptions = CV.defaultDecodeOptions {
                                             CV.decDelimiter = fromIntegral $ ord (delimiter opt)
                      }
-        csvResult = fromRight' $ 
+        csvResult = case CV.decodeWith  csvoptions 
+
+                                        (case (hasHeader opt) of 
+                                            Yes -> CV.HasHeader
+                                            No  -> CV.NoHeader)
+
+                                        csvData  of
+                                            Left str -> error $ "Error in decoding CSV file " ++ f ++ ": " ++ str
+                                            Right res -> res
+
+{-        csvResult = fromRight' $ 
                         CV.decodeWith   csvoptions 
 
                                         (case (hasHeader opt) of 
@@ -223,7 +249,7 @@ readCSVwithOptions opt f = do
                                             No  -> CV.NoHeader)
 
                                         csvData
-
+-}
     return csvResult
 
 
@@ -309,8 +335,10 @@ csvToRTable m c =
                                     -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
                                     case (dtype ci) of
                                         Integer     -> RInt (val::Integer) -- (read (Data.ByteString.Char8.unpack col) :: Int)   --((read $ show val) :: Int)
-                                        Varchar     -> RText $ decodeUtf8 col -- decodeUtf8 :: ByteString -> Text 
-                                        Date fmt    -> RDate {   rdate = decodeUtf8 col , dtformat = fmt } --(val::T.Text)
+                                        Varchar     -> RText $ if False then trace ("Creating RText for column " ++ (name ci)) $ (val::T.Text) else (val::T.Text)                                                                                                                        
+                                                                                                                        -- $ decodeUtf8 col else  decodeUtf8 col -- decodeUtf8 :: ByteString -> Text 
+                                                                                                                        -- $ decodeUtf16LE  col else  decodeUtf16LE  col  -- decodeUtf16LE :: ByteString -> Text
+                                        Date fmt    -> RDate {   rdate = (val::T.Text) {-decodeUtf8 col-} , dtformat = fmt } -- (val::T.Text)
                                                                  --getDateFormat (val::String)}
                                         Timestamp fmt -> RTime $ createRTimeStamp fmt (Data.ByteString.Char8.unpack col)  -- Data.ByteString.Char8.unpack :: ByteString -> [Char] 
                                         Double      -> RDouble (val::Double) --(read (Data.ByteString.Char8.unpack col) :: Double)  -- ((read $ show val) :: Double)
@@ -327,8 +355,12 @@ csvToRTable m c =
                                     
                                         -- use Data.Csv parsing capabilities in order to turn a Column (i.e. a Field, i.e., a ByteString)
                                         -- into a known data type.
-                                        -- For this reason we are going to use : CV.parseField :: Field -> Parser a
-                                        val = fromRight' $ CV.runParser $ CV.parseField col
+                                        -- For this reason we are going to use : CV.parseField :: Field -> Parser a                                    
+                                        --val = fromRight' $ CV.runParser $ CV.parseField col
+                                        val = case CV.runParser $ CV.parseField col of
+                                            Left str -> error $ "Error in parsing column " ++ (name ci) ++ ":" ++ str
+                                            Right v -> v
+
                                         {--
                                         val = case CV.runParser $ CV.parseField col of 
                                                     Left  e  -> e -- you should throw an exception here!
