@@ -32,7 +32,9 @@ library
                       -- https://hackage.haskell.org/package/cereal
                       , cereal
                       -- Data.Either.Combinators (https://hackage.haskell.org/package/either-4.4.1.1/docs/Data-Either-Combinators.html)
-                      , either      
+                      , either
+                      -- transformers-0.5.5.0   - https://hackage.haskell.org/package/transformers-0.5.5.0/docs/Control-Monad-Trans-Writer-Strict.html
+                      , transformers      
                     -- , simple-sql-parser    
   default-language:    Haskell2010
 

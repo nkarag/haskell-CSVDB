@@ -41,6 +41,7 @@ module Data.RTable.Julius (
     ,GroupOnPred (..)
     ,evalJulius
     ,juliusToRTable
+    ,juliusToResult
     ,takeNamedResult
     ) where
 
@@ -419,6 +420,13 @@ evalJulius (restExpression :=> NamedResult rname (EtlR relOperExpression)) =
 juliusToRTable :: ETLMappingExpr -> RTable
 juliusToRTable = etl . evalJulius
 
+
+-- | Receives an input ETL Mapping expression, evaluates it to an ETL Mapping and executes it, 
+-- in order to return an RTabResult containing an RTable storing the result of the ETL Mapping, as well as the number of RTuples returned 
+juliusToResult :: ETLMappingExpr -> RTabResult
+juliusToResult = etlRes . evalJulius
+
+
 -- | We use this data type in order to identify unary vs binary operations and if the table is coming from the left or right branch
 data TabExprEnhanced = TXE TabExpr | EmptyTab
 
@@ -634,7 +642,7 @@ evalROpExpr (restExpression :. rop) =
                     ROperationEmpty ->  (RCombinedOp {rcombOp = currfunc}, TXE tabExpr, EmptyTab)
 
 
--- | turns the  list of agg operation expressios to a list of RAggOperation data type
+-- | turns the  list of agg operation expressions to a list of RAggOperation data type
 aggOpExprToAggOp :: [AggOp] -> [RAggOperation]
 aggOpExprToAggOp [] = []
 aggOpExprToAggOp (aggopExpr : rest) = 

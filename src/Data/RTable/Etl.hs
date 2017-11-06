@@ -34,6 +34,7 @@ module Data.RTable.Etl
         ,ETLMapping (..)
         --,runETLmapping
         ,etl
+        ,etlRes
         ,rtabToETLMapping
         ,createLeafETLMapLD
         ,createLeafBinETLMapLD
@@ -479,6 +480,16 @@ runETLmapping ETLMapLD { etlOp = runMe, tabL = prevmap, tabR = rtab } =
         else let   
                 prevRtab = runETLmapping prevmap -- execute previous ETLMapping to get the resulting RTable
              in etlOpB runMe prevRtab rtab
+
+-- | This operator executes an ETLMapping and returns the RTabResult  Writer Monad
+-- that embedds apart from the resulting RTable, also the number of RTuples returned
+etlRes ::
+       ETLMapping  -- ^ input ETLMapping
+    -> RTabResult   -- ^ output RTabResult
+etlRes etlm = 
+    let resultRtab = etl etlm
+        returnedRtups = rtuplesRet $ V.length resultRtab
+    in rtabResult (resultRtab, returnedRtups)
 
 -- | Model an RTable as an ETLMapping which when executed will return the input RTable
 rtabToETLMapping ::

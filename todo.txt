@@ -2,6 +2,81 @@
 == IN PROGRESS
 ============================
 					
+<<<20171027		Create a new git branch ("RTabResult") and implement a new data type: 
+				type RTabResult = Writer Numrows RTable
+				type Numrows = Int
+
+				Alternative A
+				-------------------
+				https://stackoverflow.com/questions/33881822/understanding-example-on-writer-monad 
+
+				newtype Writer w a = Writer { runWriter :: (a, w) }
+
+				instance Functor (Writer w) where
+				  fmap f (Writer (a, w)) = Writer (f a, w)
+
+				instance Monoid w => Applicative (Writer w) where
+				  pure a = Writer (a, mempty)
+				  Writer (f, w) <*> Writer (a, w') = Writer (f a, w `mappend` w')
+
+				instance Monoid w => Monad (Writer w) where
+				  return = pure
+				  Writer (a, w) >>= f = let (b, w') = runWriter (f a)
+				                        in Writer (b, w `mappend` w')
+				
+				Alternative B
+				-------------
+			    :m + Control.Monad.Trans.Writer.Strict
+				(transformers-0.5.5.0)  https://hackage.haskell.org/package/transformers-0.5.5.0/docs/Control-Monad-Trans-Writer-Strict.html
+
+				-- stack install transformers-0.5.2.0
+				-- :m + Control.Monad.Trans.Writer.Lazy  (https://hackage.haskell.org/package/transformers-0.5.2.0/docs/Control-Monad-Trans-Writer-Lazy.html#v:writer)
+
+				-- type NumRows = Int
+				:m + Data.Monoid
+				type NumRows = Sum Int
+				
+				-- RTabResult will be a Writer Monad:
+				type RTabResult = Writer NumRows RTable
+
+				> let tab1 = Data.Vector.fromList [Data.HashMap.Strict.fromList [("col1", "val1"),("col2", "val2")], Data.HashMap.Strict.fromList [("col1", "val3"),("col2", "val4")]] :: RTable
+
+				-- create an RTabResult
+				> let res1 = writer (tab1, 2) :: RTabResult
+
+				-- Get the info in the Writer Monad (RTabResult)
+				nikos-ghci> runWriter res1
+				([fromList [("col2","val2"),("col1","val1")],fromList [("col2","val4"),("col1","val3")]],2)
+
+
+				-- Get only the log message (num of rows) from the RTabResult 
+				nikos-ghci> execWriter res1				
+				2
+
+
+				-- Example of RTabResult composition
+				nikos-ghci> select :: RTable -> RTabResult ; select t = writer (Data.Vector.take 1 t, (Sum (1::Int)))
+				nikos-ghci> :t select
+				select :: RTable -> RTabResult
+
+
+				nikos-ghci> join :: RTable -> RTable -> RTabResult ; join t1 t2 = writer (t1 Data.Vector.++ t2 , Sum ((Data.Vector.length t1 + Data.Vector.length t2)::Int))
+				nikos-ghci> :t join
+				join :: RTable -> RTable -> RTabResult				
+
+				nikos-ghci> result = do {r1 <- select tab1 ; join r1 tab1}
+				nikos-ghci> runWriter result
+
+				([fromList [("col2","val2"),("col1","val1")],fromList [("col2","val2"),("col1","val1")],fromList [("col2","val4"),("col1","val3")]],Sum {getSum = 4})
+
+				The getSum = 4 is due to 1 + (1+2), where 1 is from the select operation and 1+2 = 3 is from the addition of the vector's lenghts in the join operation.
+
+				-----------------------------------------
+
+				then you must change all functions doing operations on RTables and returning an RTable, to ones returning a RTabResult.
+				The RTabResults includes apart from the resulting RTable, also the number of rows affected by the operation in question (as a log).
+
+
 <<<20170427		implement 
 					* (DONE) GroupBy and (DONE) Aggregation
 					* (DONE) upsertRtuple (wrapper over HashMap.insert), (DONE) singleton RTable
@@ -16,13 +91,6 @@
 == OPEN (Not Started)
 ============================
 
-<<<20171027		Create a new git branch and implement a new data type: 
-				newtype RTabResult = Writer Numrows RTable
-				type Numrows = Int
-
-				then you must change all functions doing operations on RTables and returning an RTable, to ones returning a RTabResult.
-				The RTabResults includes apart from the resulting RTable, also the number of rows affected by the operation in question (as a log).
-
 <<<20170918		Make basic Data Types strict based on: https://www.fpcomplete.com/blog/2017/09/all-about-strictness
 
 <<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
@@ -36,7 +104,22 @@
 <<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
 				We must be able to pattern match on these commands. Basically we need the following functions:
 
-					parseCommand :: Text -> Command -- Parse user input (Text) and transform it into a structured Command data type
+					parseCommand
+
+
+					newtype Writer w a = Writer { runWriter :: (a, w) }
+
+				instance Functor (Writer w) where
+				  fmap f (Writer (a, w)) = Writer (f a, w)
+
+				instance Monoid w => Applicative (Writer w) where
+				  pure a = Writer (a, mempty)
+				  Writer (f, w) <*> Writer (a, w') = Writer (f a, w `mappend` w')
+
+				instance Monoid w => Monad (Writer w) where
+				  return = pure
+				  Writer (a, w) >>= f = let (b, w') = runWriter (f a)
+				                        in Writer (b, w `mappend` w') :: Text -> Command -- Parse user input (Text) and transform it into a structured Command data type
 					parsePredicate :: Text -> Predicate  -- Parse user input (Text) and transform it into a structured Predicate data type
 															 -- a predicate is an expression of filter and/or join predicates connected by Logical Operations
 

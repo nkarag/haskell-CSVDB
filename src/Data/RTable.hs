@@ -45,6 +45,8 @@ module Data.RTable
         ,ROperation (..)
         ,RAggOperation (..)
         ,IgnoreDefault (..)
+        ,RTuplesRet
+        ,RTabResult
         ,raggSum
         ,raggCount
         ,raggAvg
@@ -83,6 +85,7 @@ module Data.RTable
         ,lJ
         --,runRightJoin
         ,rJ
+        -- full outer join
         ,foJ
       --  ,runUnaryROperation
         ,ropU
@@ -112,6 +115,10 @@ module Data.RTable
         ,nvlRTable
         ,decodeColValue
         ,decodeRTable
+        ,rtabResult
+        ,runRTabResult
+        ,execRTabResult
+        ,rtuplesRet
     ) where
 
 import Debug.Trace
@@ -148,6 +155,11 @@ import Data.List (all, elem, map, zip, zipWith, elemIndex, sortOn, union, inters
 import Data.Maybe (fromJust)
 -- Data.Char
 import Data.Char (toUpper,digitToInt)
+-- Data.Monoid
+import Data.Monoid as M
+-- Control.Monad.Trans.Writer.Strict
+import Control.Monad.Trans.Writer.Strict (Writer, writer, runWriter, execWriter)
+
 
 --import qualified Data.Map.Strict as Map -- Data.Map.Strict  https://www.stackage.org/haddock/lts-7.4/containers-0.5.7.1/Data-Map-Strict.html
 --import qualified Data.Set as Set        -- https://www.stackage.org/haddock/lts-7.4/containers-0.5.7.1/Data-Set.html#t:Set
@@ -1114,6 +1126,37 @@ isNullRTuple t =
 
 
 -- * ########## RTable Operations ##############
+
+-- | Number of RTuples returned by an RTable operation
+type RTuplesRet = Sum Int
+
+-- | Creates an RTuplesRet type
+rtuplesRet :: Int -> RTuplesRet
+rtuplesRet i = (M.Sum i) :: RTuplesRet
+
+
+-- | RTabResult is the result of an RTable operation and is a Writer Monad, that includes the new RTable, 
+-- as well as the number of RTuples returned by the operation.
+type RTabResult = Writer RTuplesRet RTable
+
+-- | Creates an RTabResult (i.e., a Writer Monad) from a result RTable and the number of RTuples that it returned
+rtabResult :: 
+       (RTable, RTuplesRet)  -- ^ input pair 
+    -> RTabResult -- ^ output Writer Monad
+rtabResult (rtab, rtupRet) = writer (rtab, rtupRet)
+
+-- | Returns the info "stored" in the RTabResult Writer Monad
+runRTabResult ::
+       RTabResult
+    -> (RTable, RTuplesRet)
+runRTabResult rtr = runWriter rtr
+
+-- | Returns the "log message" in the RTabResult Writer Monad, which is the number of returned RTuples
+execRTabResult ::
+       RTabResult
+    -> RTuplesRet
+execRTabResult rtr = execWriter rtr  
+
 
 -- | removeColumn : removes a column from an RTable.
 --   The column is specified by ColumnName.
