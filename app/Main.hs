@@ -27,6 +27,7 @@ import Data.Vector (toList)
 -- List
 import Data.List (groupBy)
 
+
 -- Test command:  stack exec -- csvdb ./misc/test.csv 20 ./misc/testo.csv
 -- or, if you want to test with non-default csv options: 
 -- stack exec -- csvdb ./misc/test_options.csv 20 ./misc/testo.csv
@@ -112,15 +113,17 @@ main = do
 
     --print / write to file
     C.writeCSV fo csvNew
-    C.printCSV csvNew        
+    C.printCSV csvNew      
+    T.printRTable rtabNew  
     let foName2 = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t2.csv"
     C.writeCSV (unpack foName2) csvNew2            
     C.printCSV csvNew2
     let foName2_J = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t2_J.csv"
     C.writeCSV (unpack foName2_J) csvNew2_J
     C.printCSV csvNew2_J
+    T.printRTable rtabNew2_J
 
-
+    
     -- *** test Column Mapping
     -- create a new column holding the doubled value from the source column
     let cmap1 = E.RMap1x1 {E.srcCol = "Number", E.removeSrcCol = E.No, E.trgCol = "NewNumber", E.transform1x1 = \x -> 2*x, E.srcRTupleFilter = \_ -> True}
@@ -156,6 +159,7 @@ main = do
         
     writeResult fo "_t3.csv" rtmdata3 rtabNew3 
     writeResult fo "_t3_J.csv" rtmdata3 rtabNew3_J 
+    T.printRTable rtabNew3_J
 
     --     foName3 = (fromJust (stripSuffix ".csv"  (pack fo))) `mappend` "_t3.csv"
     --     csvNew3 = C.rtableToCSV rtmdata3 rtabNew3
@@ -192,6 +196,7 @@ main = do
         
     writeResult fo "_t4.csv" rtmdata4 rtabNew4
     writeResult fo "_t4_J.csv" rtmdata4 rtabNew4_J
+    T.printRTable rtabNew4_J  
 
     -- *** Test union, interesection, diff
     let -- change the value in column NewNumber
@@ -295,6 +300,7 @@ main = do
                 )
 
     writeResult fo "_t7a_J.csv" rtmdata5 rtabNew7a_J
+    T.printRTable rtabNew7a_J
 
 
 {-        rtabNew5_J = E.etl $ evalJulius $
@@ -387,6 +393,7 @@ main = do
 
     writeResult fo "_t8.csv" rtmdata8 rtabNew8                                       
     writeResult fo "_t8_J.csv" rtmdata8 rtabNew8_J
+    T.printRTable rtabNew8_J
 
     -- Test a RMapNx1 column mapping
     let 
@@ -418,6 +425,7 @@ main = do
 
     writeResult fo "_t9.csv" rtmdata9 rtabNew9    
     writeResult fo "_t9_J.csv" rtmdata9 rtabNew9_J    
+    T.printRTable rtabNew9_J    
 
  -- Test a RMap1xN column mapping
     let 
@@ -451,7 +459,8 @@ main = do
                 )
 
     writeResult fo "_t10.csv" rtmdata10 rtabNew10                                       
-    writeResult fo "_t10_J.csv" rtmdata10 rtabNew10_J                                       
+    writeResult fo "_t10_J.csv" rtmdata10 rtabNew10_J 
+    T.printRTable rtabNew10_J                                
 
 -- Test a RMapNxM column mapping
     let 
@@ -488,7 +497,8 @@ main = do
                 transformation [T.RText t1, T.RText t2, T.RText t3] = [T.RText (t1 `append` t3), T.RText t2]
 
     writeResult fo "_t11.csv" rtmdata11 rtabNew11                                       
-    writeResult fo "_t11_J.csv" rtmdata11 rtabNew11_J                                       
+    writeResult fo "_t11_J.csv" rtmdata11 rtabNew11_J 
+    T.printRTable rtabNew11_J                                     
 
 -- Test removeColumn operation
     let 
@@ -526,6 +536,7 @@ main = do
     
     print rtabNew12
     print rtabNew12_J
+    T.printRTable rtabNew12_J
 
 --  Test combined Roperations
     let
@@ -562,6 +573,7 @@ main = do
     
     print rtabNew13
     print rtabNew13_J
+    T.printRTable rtabNew13_J
 
 -- Test Left Outer Join
     let rtabNew14 = T.lJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
@@ -620,6 +632,7 @@ main = do
     writeResult fo "_t14_dbg.csv" rtmdata14 rtabNew14_dbg
     writeResult fo "_t14_J.csv" rtmdata14 rtabNew14_J
 
+    T.printRTable rtabNew14_J
 
 -- Test Right Outer Join
     let rtabNew15 = T.rJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
@@ -645,6 +658,7 @@ main = do
         
     writeResult fo "_t15.csv" rtmdata15 rtabNew15
     writeResult fo "_t15_J.csv" rtmdata15 rtabNew15_J
+    T.printRTable rtabNew15_J
 
 -- Test Full Outer Join
     let rtabNew15fo = T.foJ (\t1 t2 -> t1!"Number" == t2!"Number") rtab rtabNew3
@@ -681,6 +695,8 @@ main = do
     writeResult fo "_t15_fo2.csv" rtmdata15 rtabNew15fo2
     writeResult fo "_t15_fo_J.csv" rtmdata15 rtabNew15fo_J
     writeResult fo "_t15_fo2_J.csv" rtmdata15 rtabNew15fo2_J
+
+    T.printRTable rtabNew15fo2_J
         
 
 
@@ -743,6 +759,7 @@ main = do
     writeResult fo "_t16.csv" rtmdata16 rtabNew16
     writeResult fo "_t16_J.csv" rtmdata16 rtabNew16_J
 
+    T.printRTable rtabNew16_J
 
 -- Test GroupBy
     -- 
@@ -810,7 +827,8 @@ main = do
     writeResult fo "_t17.csv" rtmdata17 rtabNew17
     writeResult fo "_t17_J.csv" rtmdata17 rtabNew17_J
 
-
+    T.printRTable rtabNew17_J
+    
     --print csvNew2
     --return ()
     

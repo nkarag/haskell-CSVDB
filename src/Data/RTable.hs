@@ -15,10 +15,19 @@ commentary with @some markup@.
 {-# LANGUAGE OverloadedStrings #-}
 -- :set -XOverloadedStrings
 --  :set -XRecordWildCards
-{-# LANGUAGE GeneralizedNewtypeDeriving 
+{-# LANGUAGE GeneralizedNewtypeDeriving  -- In order to be able to derive from non-standard derivable classes (such as Num)
             ,BangPatterns
             ,RecordWildCards 
-#-}  -- In order to be able to derive from non-standard derivable classes (such as Num)
+            ,DeriveGeneric       -- Allow automatic deriving of instances for the Generic typeclass  (see Text.PrettyPrint.Tabulate.Example)
+            ,DeriveDataTypeable  -- Enable automatic deriving of instances for the Data typeclass    (see Text.PrettyPrint.Tabulate.Example)
+            {--
+                :set -XDeriveGeneric
+                :set -XDeriveDataTypeable
+            --}
+            -- Allow definition of type class instances for type synonyms. (used for RTuple instance of Tabulate)
+            --,TypeSynonymInstances  
+            --,FlexibleInstances
+#-}  
 
 -- {-# LANGUAGE  DuplicateRecordFields #-}
 
@@ -119,6 +128,9 @@ module Data.RTable
         ,runRTabResult
         ,execRTabResult
         ,rtuplesRet
+        ,getRTuplesRet
+        ,printRTable
+        ,rtupleToList
     ) where
 
 import Debug.Trace
@@ -160,6 +172,14 @@ import Data.Monoid as M
 -- Control.Monad.Trans.Writer.Strict
 import Control.Monad.Trans.Writer.Strict (Writer, writer, runWriter, execWriter)
 
+{--- Text.PrettyPrint.Tabulate
+import qualified Text.PrettyPrint.Tabulate as PP
+import qualified GHC.Generics as G
+import Data.Data
+-}
+--import qualified Text.PrettyPrint.Boxes as BX
+--import Data.Map (fromList)
+
 
 --import qualified Data.Map.Strict as Map -- Data.Map.Strict  https://www.stackage.org/haddock/lts-7.4/containers-0.5.7.1/Data-Map-Strict.html
 --import qualified Data.Set as Set        -- https://www.stackage.org/haddock/lts-7.4/containers-0.5.7.1/Data-Set.html#t:Set
@@ -196,10 +216,25 @@ type RTable = V.Vector RTuple
 type RTuple = HM.HashMap ColumnName RDataType
 
 
+-- | Turns an RTuple to a List
+rtupleToList :: RTuple -> [(ColumnName, RDataType)]
+rtupleToList = HM.toList
+
+{-
+instance Data RTuple
+instance G.Generic RTuple
+instance PP.Tabulate RTuple
+-}
+
 -- | Definitioin of the Name type
 type Name = String
+
+
 -- | Definition of the Column Name
 type ColumnName = Name
+
+-- instance PP.Tabulate ColumnName
+
 -- | Definition of the Table Name
 type RTableName = Name
 
@@ -224,6 +259,7 @@ data RDataType =
     -- RFloat  { rfloat :: Float }
       | Null
       deriving (Show,TB.Typeable, Ord, Read)   -- http://stackoverflow.com/questions/6600380/what-is-haskells-data-typeable
+
 
 -- | We need to explicitly specify due to NULL logic (anything compared to NULL returns false)
 -- @
@@ -321,6 +357,7 @@ headRTup ::
         RTable
     ->  RTuple
 headRTup = V.head    
+
 -- | Returns the Column Names of an RTuple
 getColumnNamesfromRTuple :: RTuple -> [ColumnName]
 getColumnNamesfromRTuple t = HM.keys t
@@ -1134,6 +1171,10 @@ type RTuplesRet = Sum Int
 rtuplesRet :: Int -> RTuplesRet
 rtuplesRet i = (M.Sum i) :: RTuplesRet
 
+-- | Return the number embedded in the RTuplesRet data type
+getRTuplesRet :: RTuplesRet -> Int 
+getRTuplesRet = M.getSum
+
 
 -- | RTabResult is the result of an RTable operation and is a Writer Monad, that includes the new RTable, 
 -- as well as the number of RTuples returned by the operation.
@@ -1607,7 +1648,7 @@ runGroupBy gpred aggOps cols rtab =
     let rtupList = V.toList rtab
         -- 1. form the groups of RTuples
             -- a. first sort the Rtuples based on the grouping predicate
-        listOfRTupSorted = Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (HM.toList t1) (HM.toList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+        listOfRTupSorted = Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (rtupleToList t1) (rtupleToList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
             -- b then produce the groups
         listOfRTupGroupLists = Data.List.groupBy gpred listOfRTupSorted
         -- 2. turn each (sub)list of Rtuples representing a Group into an RTable in order to apply aggregation
@@ -1637,3 +1678,250 @@ runCombinedROp ::
     -> RTable              -- ^ input RTable that the input function will be applied to
     -> RTable              -- ^ output RTable
 runCombinedROp f rtab = f rtab
+
+
+-- * ########## RTable IO Operations ##############
+
+
+-- | printRTable : Print the input RTable on screen
+printRTable ::
+       RTable
+    -> IO ()
+printRTable rtab = do
+        -- find the max value-length for each column, this will be the width of the box for this column
+        let listOfLengths = getMaxLengthPerColumn rtab
+
+        --debug
+        --putStrLn $ "List of Lengths: " ++ show listOfLengths
+
+        printContLine listOfLengths '-' rtab
+        -- print the Header
+        printRTableHeader listOfLengths rtab 
+
+        -- print the body
+        printRTabBody listOfLengths $ V.toList rtab
+
+        printContLine listOfLengths '-' rtab
+        where
+            -- [Int] a List of width per column to be used in the box definition        
+            printRTabBody :: [Int] -> [RTuple] -> IO()
+            printRTabBody _ [] = putStrLn ""            
+            printRTabBody ws (rtup : rest) = do
+                    printRTuple ws rtup
+                    printRTabBody ws rest
+
+-- | Returns the max length of the String representation of each value, for each column of the input RTable. 
+getMaxLengthPerColumn :: RTable -> [Int]
+getMaxLengthPerColumn rtab = 
+    let
+        -- Create an RTable where all the values of the columns will be the length of the String representations of the original values
+        lengthRTab = do
+            rtup <- rtab
+            let ls = Data.List.map (\(c, v) -> (c, RInt $ fromIntegral $ Data.List.length . rdataTypeToString $ v) ) (rtupleToList rtup)
+                -- create an RTuple with the column names lengths
+                headerLengths = Data.List.zip (getColumnNamesfromRTab rtab) (Data.List.map (\c -> RInt $ fromIntegral $ Data.List.length c) (getColumnNamesfromRTab rtab))
+            -- append  to the rtable also the tuple corresponding to the header (i.e., the values will be the names of the column) in order
+            -- to count them also in the width calculation
+            (return $ createRtuple ls) V.++ (return $ createRtuple headerLengths)
+
+        -- Get the max length for each column
+        resultRTab = findMaxLengthperColumn lengthRTab
+                where
+                    findMaxLengthperColumn :: RTable -> RTable
+                    findMaxLengthperColumn rt = 
+                        let colNames = (getColumnNamesfromRTab rt) -- [ColumnName]
+                            aggOpsList = Data.List.map (\c -> raggMax c c) colNames  -- [AggOp]
+                        in runAggregation aggOpsList rt
+
+{-
+        -- create a Julius expression to evaluate the max length per column
+        julexpr =  EtlMapStart
+                -- Turn each value to an (RInt i) that correposnd to the length of the String representation of the value
+                :-> (EtlC $ 
+                        Source (getColumnNamesfromRTab rtab)
+                        Target (getColumnNamesfromRTab rtab)
+                        By (\[value] -> [RInt $ Data.List.length . rdataTypeToString $ value] )
+                        (On $ Tab rtab) 
+                        RemoveSrc $
+                        FilterBy (\rtuple -> True)
+                    )
+                -- Get the max length for each column
+                :-> (EtlR $
+                        ROpStart 
+                        :. (GenUnaryOp (On Previous) $ ByUnaryOp findMaxLengthperColumn)
+                    )
+                where
+                    findMaxLengthperColumn :: RTable -> RTable
+                    findMaxLengthperColumn rt = 
+                        let colNames = (getColumnNamesfromRTab rt) -- [ColumnName]
+                            aggOpsList = V.map (\c -> raggMax c c) colNames  -- [AggOp]
+                        in runAggregation aggOpsList rt
+
+        -- evaluate the xpression and get the result in an RTable
+        resultRTab = juliusToRTable julexpr        
+-}       
+         -- get the RTuple with the results
+        resultRTuple = headRTup resultRTab
+    in 
+        -- transform it to a [Int]
+        Data.List.map (\(colname, RInt i) -> fromIntegral i) (rtupleToList resultRTuple)
+
+spaceSeparatorWidth :: Int
+spaceSeparatorWidth = 5
+
+-- | helper function in order to format the value of a column
+-- It will append at the end of the string n number of spaces.
+addSpace :: 
+        Int -- ^ number of spaces to add
+    ->  String -- ^ input String
+    ->  String -- ^ output string
+addSpace i s = s ++ Data.List.take i (repeat ' ')    
+
+
+-- | helper function in order to format the value of a column
+-- It will append at the end of the string n number of spaces.
+addCharacter :: 
+        Int -- ^ number of spaces to add
+    ->  Char   -- ^ character to add
+    ->  String -- ^ input String
+    ->  String -- ^ output string
+addCharacter i c s = s ++ Data.List.take i (repeat c)    
+
+-- | helper function that prints a continuous line adjusted to the size of the input RTable
+printContLine ::
+       [Int]    -- ^ a List of width per column to be used in the box definition
+    -> Char     -- ^ the char with which the line will be drawn
+    -> RTable
+    -> IO ()
+printContLine widths ch rtab = do
+    let listOfColNames =  getColumnNamesfromRTab rtab -- [ColumnName] 
+        listOfLinesCont = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat ch)) listOfColNames
+        formattedLinesCont = Data.List.map (\(w,l) -> addCharacter (w - (Data.List.length l) + spaceSeparatorWidth) ch l) (Data.List.zip widths listOfLinesCont)
+        formattedRowOfLinesCont = Data.List.foldr (\line accum -> line ++ accum) "" formattedLinesCont
+    putStrLn formattedRowOfLinesCont
+
+-- | printRTableHeader : Printa the input RTable's header (i.e., column names) on screen
+printRTableHeader ::
+       [Int]    -- ^ a List of width per column to be used in the box definition
+    -> RTable
+    -> IO ()
+printRTableHeader widths rtab = do -- undefined    
+        let listOfColNames =  getColumnNamesfromRTab rtab -- [ColumnName]
+            -- format each column name according the input width and return a list of Boxes [Box]
+            -- formattedList =  Data.List.map (\(w,c) -> BX.para BX.left (w + spaceSeparatorWidth) c) (Data.List.zip widths listOfColNames)    -- listOfColNames   -- map (\c -> BX.render . BX.text $ c) listOfColNames
+            formattedList = Data.List.map (\(w,c) -> addSpace (w - (Data.List.length c) + spaceSeparatorWidth) c) (Data.List.zip widths listOfColNames) 
+            -- Paste all boxes together horizontally
+            -- formattedRow = BX.render $ Data.List.foldr (\colname_box accum -> accum BX.<+> colname_box) BX.nullBox formattedList
+            formattedRow = Data.List.foldr (\colname accum -> colname ++ accum) "" formattedList
+            
+            listOfLines = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat '~')) listOfColNames
+          --  listOfLinesCont = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat '-')) listOfColNames
+            --formattedLines = Data.List.map (\(w,l) -> BX.para BX.left (w +spaceSeparatorWidth) l) (Data.List.zip widths listOfLines)
+            formattedLines = Data.List.map (\(w,l) -> addSpace (w - (Data.List.length l) + spaceSeparatorWidth) l) (Data.List.zip widths listOfLines)
+          -- formattedLinesCont = Data.List.map (\(w,l) -> addCharacter (w - (Data.List.length l) + spaceSeparatorWidth) '-' l) (Data.List.zip widths listOfLinesCont)
+            -- formattedRowOfLines = BX.render $ Data.List.foldr (\line_box accum -> accum BX.<+> line_box) BX.nullBox formattedLines
+            formattedRowOfLines = Data.List.foldr (\line accum -> line ++ accum) "" formattedLines
+          ---  formattedRowOfLinesCont = Data.List.foldr (\line accum -> line ++ accum) "" formattedLinesCont
+
+      --  printUnderlines formattedRowOfLinesCont
+        printHeader formattedRow
+        printUnderlines formattedRowOfLines
+        where
+            printHeader :: String -> IO()
+            printHeader h = putStrLn h
+
+            printUnderlines :: String -> IO()
+            printUnderlines l = putStrLn l
+{-          printHeader :: [String] -> IO ()
+            printHeader [] = putStrLn ""
+            printHeader (x:xs) = do
+                    putStr $ x ++ "\t"
+                    printHeader xs
+            
+            printUnderlines :: [String] -> IO ()
+            printUnderlines [] = putStrLn ""
+            printUnderlines (x:xs) = do
+                putStr $ (Data.List.take (Data.List.length x) (repeat '~')) ++ "\t" 
+                printUnderlines xs
+-}
+-- | Prints an RTuple on screen (only the values of the columns)
+--  [Int] is a List of width per column to be used in the box definition        
+printRTuple :: [Int] -> RTuple -> IO()
+printRTuple widths rtup = do
+    -- take list of values of each column and convert to String
+    let rtupList = Data.List.map (rdataTypeToString . snd) (rtupleToList rtup)  -- [RDataType] --> [String]
+
+        -- format each column value according the input width and return a list of [Box]
+        -- formattedValueList = Data.List.map (\(w,v) -> BX.para BX.left w v) (Data.List.zip widths rtupList)
+        formattedValueList = Data.List.map (\(w,v) -> addSpace (w - (Data.List.length v) + spaceSeparatorWidth) v) (Data.List.zip widths rtupList)
+                        -- Data.List.map (\(c,r) -> BX.text . rdataTypeToString $ r) rtupList 
+                        -- Data.List.map (\(c,r) -> rdataTypeToString $ r) rtupList --  -- [String]
+        -- Paste all boxes together horizontally
+        -- formattedRow = BX.render $ Data.List.foldr (\value_box accum -> accum BX.<+> value_box) BX.nullBox formattedValueList
+        formattedRow = Data.List.foldr (\value_box accum -> value_box ++ accum) "" formattedValueList
+    putStrLn formattedRow
+
+{-    printList formattedValueList
+    where 
+        printList :: [String] -> IO()
+        printList [] = putStrLn ""
+        printList (x:xs) = do
+            putStr $ x ++ "\t"
+            printList xs
+-}
+-- | Turn the value stored in a RDataType into a String in order to be able to print it
+rdataTypeToString :: RDataType -> String
+rdataTypeToString rdt =
+    case rdt of
+        RInt i -> show i
+        RText t -> unpack t
+        RDate {rdate = d, dtformat = f} -> unpack d
+        RTime t -> unpack $ rtext (rTimeStampToRText "DD/MM/YYYY HH24:MI:SS" t)
+        RDouble db -> show db
+        Null -> "NULL"
+
+
+
+{-
+-- | This data type is used in order to be able to print the value of a column of an RTuple
+data ColPrint = ColPrint { colName :: String, val :: String } deriving (Data, G.Generic)
+instance PP.Tabulate ColPrint
+
+data PrintableRTuple = PrintableRTuple [ColPrint]  deriving (Data, G.Generic)
+instance PP.Tabulate PrintableRTuple
+
+instance PP.CellValueFormatter PrintableRTuple where
+    -- ppFormatter :: a -> String
+    ppFormatter [] = ""
+    ppFormatter (colpr:rest)  = (BX.render $ BX.text (val colpr)) ++ "\t" ++ ppFormatter rest
+
+-- | Turn an RTuple to a list of RTuplePrint
+rtupToPrintableRTup :: RTuple -> PrintableRTuple
+rtupToPrintableRTup rtup = 
+    let rtupList = rtupleToList rtup  -- [(ColumnName, RDataType)]
+    in PrintableRTuple $ Data.List.map (\(c,r) -> ColPrint { colName = c, val = rdataTypeToString r }) rtupList  -- [ColPrint]
+
+-- | Turn the value stored in a RDataType into a String in order to be able to print it
+rdataTypeToString :: RDataType -> String
+rdataTypeToString rdt = undefined
+
+-- | printRTable : Print the input RTable on screen
+printRTable ::
+       RTable
+    -> IO ()
+printRTable rtab = -- undefined
+    do 
+        let vectorOfprintableRTups = do 
+                                rtup <- rtab
+                                let rtupPrint = rtupToPrintableRTup rtup 
+                                return rtupPrint
+{-
+
+                                let rtupList = rtupleToList rtup  -- [(ColumnName, RDataType)]
+                                    colNamesList = Data.List.map (show . fst) rtupList  -- [String]
+                                    rdatatypesStringfied = Data.List.map (rdataTypeToString . snd) rtupList  -- [String]
+                                    map = Data.Map.fromList $  Data.List.zip colNamesList rdatatypesStringfied -- [(String, String)]                                
+                                return colNamesList -- map-}
+        PP.ppTable vectorOfprintableRTups
+
+-}

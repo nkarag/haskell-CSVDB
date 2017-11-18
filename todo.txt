@@ -1,8 +1,72 @@
 ============================
 == IN PROGRESS
 ============================
-					
-<<<20171027		Create a new git branch ("RTabResult") and implement a new data type: 
+
+
+<<<20170427		implement 
+					* (DONE) GroupBy and (DONE) Aggregation
+					* (DONE) upsertRtuple (wrapper over HashMap.insert), (DONE) singleton RTable
+					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
+					* (DONE) addSurrogateKey operation
+
+					* Dedublicate and 
+					* Merge operations 
+				with Data.List groupby and nubby functions
+
+============================
+== OPEN (Not Started)
+============================
+
+<<<20170918		Make basic Data Types strict based on: https://www.fpcomplete.com/blog/2017/09/all-about-strictness
+
+<<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
+				in order to implement an SQL command line interface over CSVs
+
+				Usage example:
+
+				parseQueryExpr   SQL2011 "error.file" Nothing "Select * from tab1, tab2 where acol > bcol group by acol having count(*) > 2"
+
+
+<<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
+				We must be able to pattern match on these commands. Basically we need the following functions:
+
+					parseCommand
+
+
+					newtype Writer w a = Writer { runWriter :: (a, w) }
+
+				instance Functor (Writer w) where
+				  fmap f (Writer (a, w)) = Writer (f a, w)
+
+				instance Monoid w => Applicative (Writer w) where
+				  pure a = Writer (a, mempty)
+				  Writer (f, w) <*> Writer (a, w') = Writer (f a, w `mappend` w')
+
+				instance Monoid w => Monad (Writer w) where
+				  return = pure
+				  Writer (a, w) >>= f = let (b, w') = runWriter (f a)
+				                        in Writer (b, w `mappend` w') :: Text -> Command -- Parse user input (Text) and transform it into a structured Command data type
+					parsePredicate :: Text -> Predicate  -- Parse user input (Text) and transform it into a structured Predicate data type
+															 -- a predicate is an expression of filter and/or join predicates connected by Logical Operations
+
+					cmdToEtlMap :: Command -> ETLMapping  -- Transform the Command to an ETLMapping that is ready to be executed and yield final result (an RTable)
+
+				Also we will need basic Input / Output functions for the corresponding input/output commands like the following:
+
+					importCSV :: Command -> RTable
+					listCSV :: RTable  -> IO()
+					exportCSV :: RTable -> IO()
+
+
+<<<20170421		Check SQL parser at: http://jakewheat.github.io/simple-sql-parser/latest/
+
+============================
+== COMPLETED
+============================
+<<<<20171113	implement printRTable :: RTable -> IO() 
+20171117>>> (Completion)
+
+<<<20171027		Create a new git branch ("RTabResult") and implement a new data type that will return the number of RTuples returned from the execution of an operation (e.g. ETL Mapping)
 				type RTabResult = Writer Numrows RTable
 				type Numrows = Int
 
@@ -75,68 +139,9 @@
 
 				then you must change all functions doing operations on RTables and returning an RTable, to ones returning a RTabResult.
 				The RTabResults includes apart from the resulting RTable, also the number of rows affected by the operation in question (as a log).
+20171108>>> (Completion)
 
 
-<<<20170427		implement 
-					* (DONE) GroupBy and (DONE) Aggregation
-					* (DONE) upsertRtuple (wrapper over HashMap.insert), (DONE) singleton RTable
-					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
-					* (DONE) addSurrogateKey operation
-
-					* Dedublicate and 
-					* Merge operations 
-				with Data.List groupby and nubby functions
-
-============================
-== OPEN (Not Started)
-============================
-
-<<<20170918		Make basic Data Types strict based on: https://www.fpcomplete.com/blog/2017/09/all-about-strictness
-
-<<<20170609		Exploit SQL Parser: http://jakewheat.github.io/simple-sql-parser/latest/#simple-sql-parser
-				in order to implement an SQL command line interface over CSVs
-
-				Usage example:
-
-				parseQueryExpr   SQL2011 "error.file" Nothing "Select * from tab1, tab2 where acol > bcol group by acol having count(*) > 2"
-
-
-<<<20170427		Create a minimal set of COMMANDS that will be used in order to process CSV files either from a command line, or via a script in a file.
-				We must be able to pattern match on these commands. Basically we need the following functions:
-
-					parseCommand
-
-
-					newtype Writer w a = Writer { runWriter :: (a, w) }
-
-				instance Functor (Writer w) where
-				  fmap f (Writer (a, w)) = Writer (f a, w)
-
-				instance Monoid w => Applicative (Writer w) where
-				  pure a = Writer (a, mempty)
-				  Writer (f, w) <*> Writer (a, w') = Writer (f a, w `mappend` w')
-
-				instance Monoid w => Monad (Writer w) where
-				  return = pure
-				  Writer (a, w) >>= f = let (b, w') = runWriter (f a)
-				                        in Writer (b, w `mappend` w') :: Text -> Command -- Parse user input (Text) and transform it into a structured Command data type
-					parsePredicate :: Text -> Predicate  -- Parse user input (Text) and transform it into a structured Predicate data type
-															 -- a predicate is an expression of filter and/or join predicates connected by Logical Operations
-
-					cmdToEtlMap :: Command -> ETLMapping  -- Transform the Command to an ETLMapping that is ready to be executed and yield final result (an RTable)
-
-				Also we will need basic Input / Output functions for the corresponding input/output commands like the following:
-
-					importCSV :: Command -> RTable
-					listCSV :: RTable  -> IO()
-					exportCSV :: RTable -> IO()
-
-
-<<<20170421		Check SQL parser at: http://jakewheat.github.io/simple-sql-parser/latest/
-
-============================
-== COMPLETED
-============================
 <<<20170907
 			Implement CSV reading with options (various delimiter characters and header/noHeader) (in Base.hs)
 			Impement projection by index over CSV files (in Base.hs)
