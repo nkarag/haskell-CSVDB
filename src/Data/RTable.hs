@@ -56,6 +56,7 @@ module Data.RTable
         ,IgnoreDefault (..)
         ,RTuplesRet
         ,RTabResult
+        ,OrderingSpec (..)
         ,raggSum
         ,raggCount
         ,raggAvg
@@ -75,7 +76,9 @@ module Data.RTable
         ,restrictNrows
         ,createRTableMData
         ,createRTimeStamp
-        ,getRTupColValue
+        ,getRTupColValue        
+        ,rtupLookup
+        ,rtupLookupDefault
         , (<!>)
         ,headRTup
         ,upsertRTuple
@@ -86,6 +89,10 @@ module Data.RTable
         ,toListColumnName
         ,toListColumnInfo
         ,toListRDataType
+        ,rtupleToList
+        ,rtupleFromList
+        ,rtableToList
+        ,rtableFromList
         --,runRfilter
         ,f
         --,runInnerJoin
@@ -112,8 +119,10 @@ module Data.RTable
         ,rAgg
         --,runGroupBy
         ,rG 
+        ,rO
         --,runCombinedROp 
         ,rComb
+        ,stripRText
         ,removeColumn
         ,addColumn
         ,isNull
@@ -131,6 +140,9 @@ module Data.RTable
         ,getRTuplesRet
         ,printRTable
         ,rtupleToList
+        ,joinRTuples
+        ,insertPrepend
+        ,insertAppend
     ) where
 
 import Debug.Trace
@@ -162,15 +174,18 @@ import qualified Data.Typeable as TB --(typeOf, Typeable)
 import qualified Data.Dynamic as D  -- https://hackage.haskell.org/package/base-4.9.1.0/docs/Data-Dynamic.html
 
 -- Data.List
-import Data.List (all, elem, map, zip, zipWith, elemIndex, sortOn, union, intersect, (\\), take, length, groupBy, sortBy, foldl', foldr, foldr1, foldl',head)
+import Data.List (last, all, elem, map, zip, zipWith, elemIndex, sortOn, union, intersect, (\\), take, length, repeat, groupBy, sort, sortBy, foldl', foldr, foldr1, foldl',head)
 -- Data.Maybe
 import Data.Maybe (fromJust)
 -- Data.Char
-import Data.Char (toUpper,digitToInt)
+import Data.Char (toUpper,digitToInt, isDigit)
 -- Data.Monoid
 import Data.Monoid as M
 -- Control.Monad.Trans.Writer.Strict
 import Control.Monad.Trans.Writer.Strict (Writer, writer, runWriter, execWriter)
+-- Text.Printf
+import Text.Printf (printf)
+
 
 {--- Text.PrettyPrint.Tabulate
 import qualified Text.PrettyPrint.Tabulate as PP
@@ -215,10 +230,21 @@ type RTable = V.Vector RTuple
 --   For this reason, we have embedded the notion of a fixed column-order in the RTuple metadata. See 'RTupleMData'.
 type RTuple = HM.HashMap ColumnName RDataType
 
+-- | Turns a RTable to a list
+rtableToList :: RTable -> [RTuple]
+rtableToList = V.toList
+
+-- | Creates an RTable from a list of RTuples
+rtableFromList :: [RTuple] -> RTable
+rtableFromList = V.fromList
 
 -- | Turns an RTuple to a List
 rtupleToList :: RTuple -> [(ColumnName, RDataType)]
 rtupleToList = HM.toList
+
+-- | Create an RTuple from a list
+rtupleFromList :: [(ColumnName, RDataType)] -> RTuple 
+rtupleFromList = HM.fromList
 
 {-
 instance Data RTuple
@@ -258,7 +284,7 @@ data RDataType =
       | RDouble { rdouble :: Double }
     -- RFloat  { rfloat :: Float }
       | Null
-      deriving (Show,TB.Typeable, Ord, Read)   -- http://stackoverflow.com/questions/6600380/what-is-haskells-data-typeable
+      deriving (Show,TB.Typeable, Read)   -- http://stackoverflow.com/questions/6600380/what-is-haskells-data-typeable
 
 
 -- | We need to explicitly specify due to NULL logic (anything compared to NULL returns false)
@@ -274,24 +300,41 @@ data RDataType =
 --
 instance Eq RDataType where
     RInt i1 == RInt i2 = i1 == i2
-    RInt i == _ = False
+    -- RInt i == _ = False
     RText t1 == RText t2 = t1 == t2
-    RText t1 == _ = False
+    -- RText t1 == _ = False
     RDate t1 s1 == RDate t2 s2 = (t1 == t1) && (s1 == s2)
-    RDate t1 s1 == _ = False
+    -- RDate t1 s1 == _ = False
     RTime t1 == RTime t2 = t1 == t2
-    RTime t1 == _ = False
+    -- RTime t1 == _ = False
     RDouble d1 == RDouble d2 = d1 == d2
-    RDouble d1 == _ = False
+    -- RDouble d1 == _ = False
     -- Watch out: NULL logic (anything compared to NULL returns false)
     Null == Null = False
     _ == Null = False
     Null == _ = False
+    -- anything else is just False
+    _ == _ = False
 
     Null /= Null = False
     _ /= Null = False
     Null /= _ = False
     x /= y = not (x == y) 
+
+-- Need to explicitly specify due to "Null logic" (see Eq)
+instance Ord RDataType where
+    Null <= _ = False
+    _ <= Null = False
+    Null <= Null = False
+    RInt i1 <= RInt i2 = i1 <= i2
+    RText t1 <= RText t2 = t1 <= t2
+    RDate t1 s1 <= RDate t2 s2 = (t1 <= t1) && (s1 == s2)
+    RTime t1 <= RTime t2 = t1 <= t2
+    RTime t1 <= _ = False
+    RDouble d1 <= RDouble d2 = d1 <= d2
+    -- anything else is just False
+    _ <= _ = False
+
 
 -- | Use this function to compare an RDataType with the Null value because due to Null logic
 --  x == Null or x /= Null, will always return False.
@@ -362,15 +405,32 @@ headRTup = V.head
 getColumnNamesfromRTuple :: RTuple -> [ColumnName]
 getColumnNamesfromRTuple t = HM.keys t
 
+-- | Returns the value of an RTuple column based on the ColumnName key
+--   if the column name is not found, then it returns Nothing
+rtupLookup ::
+       ColumnName    -- ^ ColumnName key
+    -> RTuple        -- ^ Input RTuple
+    -> Maybe RDataType     -- ^ Output value
+rtupLookup =  HM.lookup
+
+-- | Returns the value of an RTuple column based on the ColumnName key
+--   if the column name is not found, then it returns a default value
+rtupLookupDefault ::
+       RDataType     -- ^ Default value to return in the case the column name does not exist in the RTuple
+    -> ColumnName    -- ^ ColumnName key
+    -> RTuple        -- ^ Input RTuple
+    -> RDataType     -- ^ Output value
+rtupLookupDefault =  HM.lookupDefault
+
 
 -- | getRTupColValue :: Returns the value of an RTuple column based on the ColumnName key
 --   if the column name is not found, then it returns Null.
---   Note that this might be confusing since ther might be an existing column name with a Null value    
+--   !!!Note that this might be confusing since there might be an existing column name with a Null value!!!
 getRTupColValue ::
        ColumnName    -- ^ ColumnName key
     -> RTuple        -- ^ Input RTuple
     -> RDataType     -- ^ Output value
-getRTupColValue =  HM.lookupDefault Null
+getRTupColValue =  rtupLookupDefault Null  -- HM.lookupDefault Null
 
 -- | Operator for getting a column value from an RTuple
 --   Calls error if this map contains no mapping for the key.
@@ -493,6 +553,15 @@ upsertRTuple ::
 upsertRTuple cname newVal tupsrc = HM.insert cname newVal tupsrc
 
 -- newtype NumericRDT = NumericRDT { getRDataType :: RDataType } deriving (Eq, Ord, Read, Show, Num)
+
+
+-- | stripRText : O(n) Remove leading and trailing white space from a string.
+-- If the input RDataType is not an RText, then Null is returned
+stripRText :: 
+           RDataType  -- ^ input string
+        -> RDataType
+stripRText (RText t) = RText $ T.strip t
+stripRText _ = Null
 
 
 -- | RTimestamp data type
@@ -640,8 +709,6 @@ createRTupleMdata clist =
 -- We implement the fixed column order logic for an RTuple, only at metadata level and not at the RTuple implementation, which is a HashMap (see @ RTuple)
 -- So the fixed order of this list equals the fixed column order of the RTuple.
 --type RTupleMData =  [(ColumnName, ColumnInfo)] -- HM.HashMap ColumnName ColumnInfo         
-
-
 
 
 
@@ -864,6 +931,11 @@ data ROperation =
                                                      --  In this sense we can also include a binary operation (e.g. join), if we partially apply the join to one RTable
                                                      --  e.g., (ij jpred rtab) . (p plist) . (f pred)
     | RBinOp { rbinOp :: BinaryRTableOperation } -- ^ A generic binary ROperation.
+    | ROrderBy { colOrdList :: [(ColumnName, OrderingSpec)] }   -- ^ Order the RTuples of the RTable acocrding to the specified list of Columns.
+                                                                -- First column in the input list has the highest priority in the sorting order
+
+-- | A sum type to help the specification of a column ordering (Ascending, or Descending)
+data OrderingSpec = Asc | Desc deriving (Show, Eq)
 
 -- | A generic unary operation on a RTable
 type UnaryRTableOperation = RTable -> RTable
@@ -1087,6 +1159,7 @@ runUnaryROperation rop irtab =
         RAggregate { aggList = aggFunctions }                                           ->  runAggregation aggFunctions irtab
         RGroupBy  { gpred = groupingpred, aggList = aggFunctions, colGrByList = cols }  ->  runGroupBy groupingpred aggFunctions cols irtab
         RCombinedOp { rcombOp = comb }                                                  ->  runCombinedROp comb irtab 
+        ROrderBy { colOrdList = colist }                                                ->  runOrderBy colist irtab
 
 
 -- | ropB operator executes a binary ROperation
@@ -1232,27 +1305,67 @@ runRfilter ::
     RPredicate
     -> RTable
     -> RTable
-runRfilter = V.filter
+runRfilter rpred rtab = 
+    if isRTabEmpty rtab
+        then emptyRTable
+        else 
+            V.filter rpred rtab
 
 -- | RTable Projection operator
 p = runProjection
 
--- | Implements RTable projection operation
+-- | Implements RTable projection operation.
+-- If a column name does not exist, then an empty RTable is returned.
 runProjection :: 
     [ColumnName]  -- ^ list of column names to be included in the final result RTable
     -> RTable
     -> RTable
-runProjection colNamList irtab = do -- RTable is a Monad
-    srcRtuple <- irtab
-    let
-        -- 1. get original column value (in this case it is a list of values)
-        srcValueL = Data.List.map (\src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
-                                                        src   -- column name to look for (source) - i.e., the key in the HashMap
-                                                        srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
-                        ) colNamList
-        -- 2. create the new RTuple
-        targetRtuple = HM.fromList (Data.List.zip colNamList srcValueL)
-    return targetRtuple
+runProjection colNamList irtab = 
+    if isRTabEmpty irtab
+        then
+            emptyRTable
+        else
+            do -- RTable is a Monad
+                srcRtuple <- irtab
+                let
+                    -- 1. get original column value (in this case it is a list of values :: Maybe RDataType)
+                    srcValueL = Data.List.map (\colName -> rtupLookup colName srcRtuple) colNamList
+
+                -- if there is at least one Nothing value then an non-existing column name has been asked. 
+                if Data.List.elem Nothing srcValueL 
+                    then -- return an empty RTable
+                        emptyRTable
+                    else
+                        let 
+                            -- 2. create the new RTuple                        
+                            valList = Data.List.map (\(Just v) -> v) srcValueL -- get rid of Maybe
+                            targetRtuple = HM.fromList (Data.List.zip colNamList valList)
+                        in return targetRtuple                        
+
+
+-- | Implements RTable projection operation.
+-- If a column name does not exist, then the returned RTable includes this column with a Null
+-- value. This projection implementation allows missed hits.
+runProjectionMissedHits :: 
+    [ColumnName]  -- ^ list of column names to be included in the final result RTable
+    -> RTable
+    -> RTable
+runProjectionMissedHits colNamList irtab = 
+    if isRTabEmpty irtab
+        then
+            emptyRTable
+        else
+            do -- RTable is a Monad
+                srcRtuple <- irtab
+                let
+                    -- 1. get original column value (in this case it is a list of values)
+                    srcValueL = Data.List.map (\src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
+                                                                    src   -- column name to look for (source) - i.e., the key in the HashMap
+                                                                    srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
+                                    ) colNamList
+                    -- 2. create the new RTuple
+                    targetRtuple = HM.fromList (Data.List.zip colNamList srcValueL)
+                return targetRtuple
 
 
 -- | restrictNrows: returns the N first rows of an RTable
@@ -1263,7 +1376,7 @@ restrictNrows ::
 restrictNrows n r1 = V.take n r1
 
 -- | RTable Inner Join Operator
-iJ = runInnerJoin
+iJ = runInnerJoinO
 
 -- | Implements an Inner Join operation between two RTables (any type of join predicate is allowed)
 -- Note that this operation is implemented as a 'Data.HashMap.Strict' union, which means "the first 
@@ -1283,6 +1396,75 @@ runInnerJoin jpred irtab1 irtab2 =  do
             else HM.empty
     removeEmptyRTuples (return targetRtuple)
         where removeEmptyRTuples = f (not.isRTupEmpty) 
+
+-- Inner Join with Oracle DB's convention for common column names.
+-- When we have two tuples t1 and t2 with a common column name (lets say "Common"), then the resulting tuple after a join
+-- will be "Common", "Common_1", so a "_1" suffix is appended. The tuple from the left table by convention retains the original column name.
+-- So "Column_1" is the column from the right table. If "Column_1" already exists, then "Column_2" is used.
+runInnerJoinO ::
+    RJoinPredicate
+    -> RTable
+    -> RTable
+    -> RTable
+runInnerJoinO jpred tabDriver tabProbed =  do
+    rtupDrv <- tabDriver
+    -- this is the equivalent of a nested loop with tabDriver playing the role of the driving table and tabProbed the probed table
+    V.foldr' (\t accum -> 
+                if (jpred rtupDrv t) 
+                    then 
+                        -- insert joined tuple to result table (i.e. the accumulator)
+                        insertAppend (joinRTuples rtupDrv t) accum
+                    else 
+                        -- keep the accumulator unchanged
+                        accum
+            ) emptyRTable tabProbed 
+
+
+-- | Joins two RTuples into one. 
+-- In this join we follow Oracle DB's convention when joining two tuples with some common column names.
+-- When we have two tuples t1 and t2 with a common column name (lets say "Common"), then the resulitng tuple after a join
+-- will be "Common", "Common_1", so a "_1" suffix is appended. The tuple from the left table by convention retains the original column name.
+-- So "Column_1" is the column from the right table.
+-- If "Column_1" already exists, then "Column_2" is used.
+joinRTuples :: RTuple -> RTuple -> RTuple
+joinRTuples tleft tright = 
+    let
+        -- change keys in tright what needs to be renamed because also appear in tleft
+        -- first keep a copy of the tright pairs that dont need a key change
+        dontNeedChange  = HM.difference tright tleft
+        changedPart = changeKeys tleft tright
+        -- create  a new version of tright, with no common keys with tleft
+        new_tright = HM.union dontNeedChange changedPart
+    in HM.union tleft new_tright  
+        where 
+            -- rename keys of right rtuple until there no more common keys with the left rtuple            
+            changeKeys :: RTuple -> RTuple -> RTuple
+            changeKeys tleft changedPart = 
+                if isRTupEmpty (HM.intersection changedPart tleft)
+                    then -- we are done, no more common keys
+                        changedPart
+                    else
+                        -- there are still common keys to change
+                        let
+                            needChange = HM.intersection changedPart tleft -- (k,v) pairs that exist in changedPart and the keys also appear in tleft. Thus these keys have to be renamed
+                            dontNeedChange  = HM.difference changedPart tleft -- (k,v) pairs that exist in changedPart and the keys dont appear in tleft. Thus these keys DONT have to be renamed
+                            new_changedPart =  fromList $ Data.List.map (\(k,v) -> (newKey k, v)) $ toList needChange
+                        in HM.union dontNeedChange (changeKeys tleft new_changedPart)
+                          
+            -- generate a new key as this:
+            -- "hello" -> "hello_1"
+            -- "hello_1" -> "hello_2"
+            -- "hello_2" -> "hello_3"
+            newKey :: ColumnName -> ColumnName
+            newKey name  = 
+                let 
+                    lastChar = Data.List.last name
+                    beforeLastChar = name !! (Data.List.length name - 2)
+                in  
+                    if beforeLastChar == '_'  &&  Data.Char.isDigit lastChar
+                                    then (Data.List.take (Data.List.length name - 2) name) ++ ( '_' : (show $ (read (lastChar : "") :: Int) + 1) )
+                                    else name ++ "_1"
+
 
 -- | RTable Left Outer Join Operator
 lJ = runLeftJoin
@@ -1330,6 +1512,7 @@ runLeftJoin jpred leftRTab rtab = do
 --  A. The result of the inner join: tabLeft INNER JOIN tabRight ON joinPred
 --  B. The rows from the preserving table (tabLeft) that DONT satisfy the join condition, enhanced with the columns
 --     of tabRight returning Null values.
+--  The common columns will appear from both tables but only the left table column's will retain their original name. 
 runLeftJoin ::
     RJoinPredicate
     -> RTable
@@ -1345,7 +1528,7 @@ runLeftJoin jpred preservingTab tab =
         -- we will use the Difference operations for this
         unionSndPart = 
             let 
-                difftab = d preservingTab unionFstPart
+                difftab = d preservingTab fstPartProj -- unionFstPart
                 -- now enhance the result with the columns of the right table
             in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
     in u unionFstPart unionSndPart
@@ -1364,7 +1547,8 @@ rJ = runRightJoin
 -- the Union between the following two RTables:
 --  A. The result of the inner join: tabLeft INNER JOIN tabRight ON joinPred
 --  B. The rows from the preserving table (tabRight) that DONT satisfy the join condition, enhanced with the columns
---     of tabRight returning Null values.
+--     of tabLeft returning Null values.
+--  The common columns will appear from both tables but only the right table column's will retain their original name. 
 runRightJoin ::
     RJoinPredicate
     -> RTable
@@ -1372,7 +1556,8 @@ runRightJoin ::
     -> RTable
 runRightJoin jpred tab preservingTab =
     let 
-        unionFstPart = iJ jpred tab preservingTab
+        unionFstPart = iJ jpred preservingTab tab --tab    -- we used the preserving table as the left table in the inner join, 
+                                                    -- in order to retain the original column names for the common columns
         -- project only the preserving tab's columns
         fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
 
@@ -1380,7 +1565,7 @@ runRightJoin jpred tab preservingTab =
         -- we will use the Difference operations for this
         unionSndPart = 
             let 
-                difftab = d preservingTab unionFstPart
+                difftab = d preservingTab   fstPartProj -- unionFstPart 
                 -- now enhance the result with the columns of the left table
             in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
     in u unionFstPart unionSndPart
@@ -1620,6 +1805,90 @@ runAggregation aggOps rtab =
                     let RAggOperation { sourceCol = src, targetCol = trg, aggFunc = aggf } = agg                        
                     in (getResultRTuple aggs rt) `HM.union` (aggf rt)   -- (aggf rt) `HM.union` (getResultRTuple aggs rt) 
 
+rO = runOrderBy
+
+-- | Implements the ORDER BY operation.
+-- First column in the input list has the highest priority in the sorting order
+-- We treat Null as the maximum value (anything compared to Null is smaller).
+-- This way Nulls are send at the end (i.e.,  "Nulls Last" in SQL parlance). This is for Asc ordering.
+-- For Desc ordering, we have the opposite. Nulls go first and so anything compared to Null is greater.
+-- @
+--      SQL example
+-- with q 
+-- as (select case when level < 4 then level else NULL end c1 -- , level c2
+-- from dual
+-- connect by level < 7
+-- ) 
+-- select * 
+-- from q
+-- order by c1
+--
+-- C1
+--    ----
+--     1
+--     2
+--     3
+--     Null
+--     Null
+--     Null
+--
+-- with q 
+-- as (select case when level < 4 then level else NULL end c1 -- , level c2
+-- from dual
+-- connect by level < 7
+-- ) 
+-- select * 
+-- from q
+-- order by c1 desc
+
+--     C1
+--     --
+--     Null
+--     Null    
+--     Null
+--     3
+--     2
+--     1
+-- @
+runOrderBy ::
+        [(ColumnName, OrderingSpec)]  -- ^ Input ordering specification
+    ->  RTable -- ^ Input RTable
+    ->  RTable -- ^ Output RTable
+runOrderBy ordSpec rtab = 
+    let unsortedRTupList = rtableToList rtab
+        sortedRTupList = Data.List.sortBy (\t1 t2 -> compareTuples ordSpec t1 t2) unsortedRTupList
+    in rtableFromList sortedRTupList
+    where 
+        compareTuples :: [(ColumnName, OrderingSpec)] -> RTuple -> RTuple -> Ordering
+        compareTuples [] t1 t2 = EQ
+        compareTuples ((col, colordspec) : rest) t1 t2 = 
+            -- if they are equal or both Null on the column in question, then go to the next column
+            if nvl (t1 <!> col) (RText "I am Null baby!") == nvl (t2 <!> col) (RText "I am Null baby!")
+                then compareTuples rest t1 t2
+                else -- Either one of the two is Null or are Not Equal
+                     -- so we need to compare t1 versus t2
+                     -- the GT, LT below refer to t1 wrt to t2
+                     -- In the following we treat Null as the maximum value (anything compared to Null is smaller).
+                     -- This way Nulls are send at the end (i.e., the default is "Nulls Last" in SQL parlance)
+                    if isNull (t1 <!> col)
+                        then 
+                            case colordspec of
+                                Asc ->  GT -- t1 is GT than t2 (Nulls go to the end)
+                                Desc -> LT
+                        else 
+                            if isNull (t2 <!> col)
+                                then 
+                                    case colordspec of
+                                        Asc ->  LT -- t1 is LT than t2 (Nulls go to the end)
+                                        Desc -> GT
+                            else
+                                -- here we cant have Nulls
+                                case compare (t1 <!> col) (t2 <!> col) of
+                                    GT -> if colordspec == Asc 
+                                            then GT else LT
+                                    LT -> if colordspec == Asc 
+                                            then LT else GT
+
 rG = runGroupBy
 
 -- RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] }
@@ -1645,12 +1914,26 @@ runGroupBy ::
     -> RTable            -- ^ input RTable
     -> RTable            -- ^ output RTable
 runGroupBy gpred aggOps cols rtab =  
-    let rtupList = V.toList rtab
+    let -- rtupList = V.toList rtab
+        
         -- 1. form the groups of RTuples
             -- a. first sort the Rtuples based on the grouping predicate
-        listOfRTupSorted = Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (rtupleToList t1) (rtupleToList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+            -- This is a very important step if we want the groupBy operation to work. This is because grouping on lists is
+            -- implemented like this: group "Mississippi" = ["M","i","ss","i","ss","i","pp","i"]
+            -- So we have to sort the list first in order to get the right grouping:
+            -- group (sort "Mississippi") = ["M","iiii","pp","ssss"]
+        
+        listOfRTupSorted = rtableToList $ runOrderBy (createOrderingSpec cols) rtab
+           -- Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (rtupleToList t1) (rtupleToList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+                           
+                           -- Data.List.map (HM.fromList) $ Data.List.sort $ Data.List.map (HM.toList) rtupList 
+                            --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
             -- b then produce the groups
         listOfRTupGroupLists = Data.List.groupBy gpred listOfRTupSorted
+
+        -- debug
+        -- !dummy = trace (show listOfRTupGroupLists) True
+
         -- 2. turn each (sub)list of Rtuples representing a Group into an RTable in order to apply aggregation
         --    Note: each RTable in this list will hold a group of RTuples that all have the same values in the input grouping columns
         --    (which must be compatible with the input grouping predicate)
@@ -1665,6 +1948,9 @@ runGroupBy gpred aggOps cols rtab =
         listOfFinalRtabs = Data.List.zipWith (iJ (\t1 t2 -> True)) listOfGroupingColumnsRtabs listOfAggregatedRtabs
         -- 6. Union all individual singleton RTables into the final RTable
     in  Data.List.foldr1 (u) listOfFinalRtabs
+    where
+        createOrderingSpec :: [ColumnName] -> [(ColumnName, OrderingSpec)]
+        createOrderingSpec cols = Data.List.zip cols (Data.List.take (Data.List.length cols) $ Data.List.repeat Asc)
 
 
 rComb = runCombinedROp
@@ -1680,6 +1966,18 @@ runCombinedROp ::
 runCombinedROp f rtab = f rtab
 
 
+-- * ########## RTable DML Operations ##############
+
+
+-- O(n) append an RTuple to an RTable
+insertAppend :: RTuple -> RTable -> RTable
+insertAppend rtup rtab = V.snoc rtab rtup
+
+-- O(n) prepend an RTuple to an RTable
+insertPrepend :: RTuple -> RTable -> RTable
+insertPrepend rtup rtab = V.cons rtup rtab  
+
+
 -- * ########## RTable IO Operations ##############
 
 
@@ -1687,28 +1985,40 @@ runCombinedROp f rtab = f rtab
 printRTable ::
        RTable
     -> IO ()
-printRTable rtab = do
-        -- find the max value-length for each column, this will be the width of the box for this column
-        let listOfLengths = getMaxLengthPerColumn rtab
+printRTable rtab = 
+    if isRTabEmpty rtab
+        then
+            do 
+                putStrLn "-------------------------------------------"
+                putStrLn " 0 rows returned"
+                putStrLn "-------------------------------------------"
 
-        --debug
-        --putStrLn $ "List of Lengths: " ++ show listOfLengths
+        else
+            do
+                -- find the max value-length for each column, this will be the width of the box for this column
+                let listOfLengths = getMaxLengthPerColumn rtab
 
-        printContLine listOfLengths '-' rtab
-        -- print the Header
-        printRTableHeader listOfLengths rtab 
+                --debug
+                --putStrLn $ "List of Lengths: " ++ show listOfLengths
 
-        -- print the body
-        printRTabBody listOfLengths $ V.toList rtab
+                printContLine listOfLengths '-' rtab
+                -- print the Header
+                printRTableHeader listOfLengths rtab 
 
-        printContLine listOfLengths '-' rtab
-        where
-            -- [Int] a List of width per column to be used in the box definition        
-            printRTabBody :: [Int] -> [RTuple] -> IO()
-            printRTabBody _ [] = putStrLn ""            
-            printRTabBody ws (rtup : rest) = do
-                    printRTuple ws rtup
-                    printRTabBody ws rest
+                -- print the body
+                printRTabBody listOfLengths $ V.toList rtab
+
+                -- print number of rows returned
+                putStrLn $ "\n"++ (show $ V.length rtab) ++ " rows returned"        
+
+                printContLine listOfLengths '-' rtab
+                where
+                    -- [Int] a List of width per column to be used in the box definition        
+                    printRTabBody :: [Int] -> [RTuple] -> IO()
+                    printRTabBody _ [] = putStrLn ""            
+                    printRTabBody ws (rtup : rest) = do
+                            printRTuple ws rtup
+                            printRTabBody ws rest
 
 -- | Returns the max length of the String representation of each value, for each column of the input RTable. 
 getMaxLengthPerColumn :: RTable -> [Int]
@@ -1877,7 +2187,8 @@ rdataTypeToString rdt =
         RText t -> unpack t
         RDate {rdate = d, dtformat = f} -> unpack d
         RTime t -> unpack $ rtext (rTimeStampToRText "DD/MM/YYYY HH24:MI:SS" t)
-        RDouble db -> show db
+        -- Round to only two decimal digits after the decimal point
+        RDouble db -> printf "%.2f" db -- show db
         Null -> "NULL"
 
 

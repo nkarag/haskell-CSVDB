@@ -1,10 +1,54 @@
 ============================
 == IN PROGRESS
-============================
+============================			
+<<<20171214		Check **all** relational operations and Column Mappings in order to gaurante that:
+										data ROperation = 
+									      ROperationEmpty
+									    | RUnion   -- ^ Union 
+									    | RInter     -- ^ Intersection
+									    | RDiff    -- ^ Difference
+								OK	    | RPrj    { colPrjList :: [ColumnName] }   -- ^ Projection
+								OK	    | RFilter { fpred :: RPredicate }   -- ^ Filter
+									    | RInJoin { jpred :: RJoinPredicate }     -- ^ Inner Join (any type of join predicate allowed)
+									    | RLeftJoin { jpred :: RJoinPredicate }   -- ^ Left Outer Join (any type of join predicate allowed)    
+									    | RRightJoin { jpred :: RJoinPredicate }  -- ^ Right Outer Join (any type of join predicate allowed)        
+									    | RAggregate { aggList :: [RAggOperation] } -- Performs some aggregation operations on specific columns and returns a singleton RTable
+									    | RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] } -- ^ A GroupBy operation
+									    | RCombinedOp { rcombOp :: UnaryRTableOperation  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . 
+									    | RBinOp { rbinOp :: BinaryRTableOperation } -- ^ A generic binary ROperation.
+									    | ROrderBy { colOrdList :: [(ColumnName, OrderingSpec)] } 
+
+
+									    runColMapping :: RColMapping -> RTable -> RTable
+
+				1. If an empty RTable is given as input, then an empty RTable is returned in the output
+				2. If the result of the operation returns no rows, then an empty RTable is returned
+			OK	3. The etlRes ::
+						       ETLMapping  -- ^ input ETLMapping
+    						-> RTabResult   -- ^ output RTabResult
+    				must return 0 rows, if the returned RTable is empty  => OK : V.length resultRtab  returns 0 for an empty vector
+
+    		OK	4. Also make printRTable to work when an empty RTable is passed
+				
+
+
+
+<<<20171205		 Implement, the following relational (DML / DDL) operations and Julius expressions:
+					* (DONE) Insert (insert an RTuple to an RTable)
+					* Update (update columns of all RTuple that apply )
+					* Create RTable
+					* Create RTable as Select
+
+
+<<<20171201		Implement RTable as a class for which Data Types like CSV can be instances.
+
+				Then separate RTable / Julius / CSV library from CSVdb, which is just an implementation of a CSVdb
+				using this library, just as myhousehold is another one.
 
 
 <<<20170427		implement 
 					* (DONE) GroupBy and (DONE) Aggregation
+					**** Note: we dont need an explicit HAVING Clause since you can have a Filter Clause after the GroupBy operation
 					* (DONE) upsertRtuple (wrapper over HashMap.insert), (DONE) singleton RTable
 					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
 					* (DONE) addSurrogateKey operation
@@ -63,6 +107,96 @@
 ============================
 == COMPLETED
 ============================
+<<<20171205		Reimplement inner join so as the common columns to follow "oracle logic" (see below). Then revisit also outer joins.
+
+				"Oracle Logic" for common columns names:
+
+						Inner Join example:
+
+						with tab1
+						as (
+						    select level sk, to_char (level || 'descr') descr, to_char('category' || level) category 
+						    from dual
+						    connect by level < 2
+						)
+						,rule2
+						as(
+						    select to_char('newCategory' || level) category, to_char(level || 'descr') rule
+						    from dual
+						    connect by level < 2 
+						)
+						,rule3
+						as(
+						    select to_char('newCategory' || level) category, to_char(level || 'descr') rule
+						    from dual
+						    connect by level < 2 
+						)
+						select *
+						from tab1 t1 join rule2 r2 on (t1.descr = r2.rule) join rule3 r3 on (t1.descr = r3.rule) 				
+
+						tab1
+						SK,DESCR,CATEGORY
+						1,1descr,category1
+
+						rule2
+						CATEGORY,RULE
+						newCategory1,1descr
+
+						rule3
+						CATEGORY,RULE
+						newCategory1,1descr						
+
+						Result
+						SK,DESCR,CATEGORY,CATEGORY_1,RULE,CATEGORY_2,RULE_1
+						1,1descr,category1,newCategory1,1descr,newCategory1,1descr
+
+						Left Outer Join Example:
+
+						with tab1
+						as (
+						    select level sk, to_char (level || 'descr') descr, to_char('category' || level) category 
+						    from dual
+						    connect by level < 3
+						)
+						,rule2
+						as(
+						    select to_char('newCategory' || level) category, to_char(level || 'descr') rule
+						    from dual
+						    connect by level < 2 
+						)
+						select *
+						from tab1 t1 left join rule2 r2 on (t1.descr = r2.rule)  						
+
+						tab1
+						SK,DESCR,CATEGORY
+						1,1descr,category1
+						2,2descr,category2
+
+						rule2
+						CATEGORY,RULE
+						newCategory1,1descr
+
+						Result
+						SK,DESCR,CATEGORY,CATEGORY_1,RULE
+						1,1descr,category1,newCategory1,1descr
+						2,2descr,category2,,
+
+20171212>>> (Completion)
+
+<<<20171129		Implement number formatting in printTable
+
+				I have implemented a simple two decimal digits after the decimal point rounding for RDouble data type as a default (hard-coded) formatting
+				based on Text.Printf.printf
+20171130>>> (Completion)
+
+<<<20171126		Implement an order by operation. 
+				You need also a separate Julius clause 
+20171129>>> (Completion)
+
+<<<20171126		fix bug with group by, when running summary in myhousehold. It has to do with the sorting operation in 
+				runGroupBy function in RTable.hs. So we need to implement an orderBy operation
+20171129>>> (Completion)
+
 <<<<20171113	implement printRTable :: RTable -> IO() 
 20171117>>> (Completion)
 

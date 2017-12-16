@@ -41,7 +41,7 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps: 
 - pptable-0.2.0.0
-- simple-sql-parser-0.4.2
+# - simple-sql-parser-0.4.2
 
 # Override default flag values for local packages and extra-deps
 flags: {}

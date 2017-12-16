@@ -48,6 +48,8 @@ module CSVdb.Base
         --,rtable2csv
         ,csvHeaderFromRtable
         ,projectByIndex
+        ,headCSV
+        ,tailCSV
         ,CSVOptions(..)
         ,YesNo (..)
     ) where
@@ -664,7 +666,17 @@ csvHeaderFromRtable rtab =
                 colListPacked = Prelude.map (encode) colList  -- turn it into a list of ByteStrings ([ByteString])
                 header = V.fromList colListPacked
             in header
+-- ##################################################
+-- *  Vector oprtations on CSV
+-- ##################################################
 
+-- | O(1) First row
+headCSV :: CSV -> Row
+headCSV = V.head
+
+-- | O(1) Yield all but the first row without copying. The CSV may not be empty.
+tailCSV :: CSV -> CSV
+tailCSV = V.tail
 
 
 -- ##################################################

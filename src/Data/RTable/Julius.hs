@@ -80,11 +80,6 @@ data ByFunction = By ColXForm OnRTable RemoveSrcCol ByPred
 data OnRTable = On TabExpr
 data RemoveSrcCol = RemoveSrc | DontRemoveSrc
 
--- | <TabExpr> = "Tab" <RTable> | "Previous"
-data TabExpr = Tab RTable | Previous
--- | this data type is used for expression where we do not allow the use of the Previous value
-data TabLiteral = TabL RTable 
-
 -- | <ByPred> = "FilterBy" <RPredicate>
 data ByPred = FilterBy RPredicate
 
@@ -109,6 +104,7 @@ data ROpExpr =
 --             |    <TabLiteral> "`Minus`" <TabExpr> 
 --             |    "GenUnaryOp" "On" <TabExpr> "ByUnaryOp" <UnaryRTableOperation> 
 --             |    "GenBinaryOp" <TabLiteral>  <TabExpr>  "ByBinaryOp" <BinaryRTableOperation>
+--             |    "OrderBy"  "[" "("<ColName> "," <OrderingSpec> ")" {,"("<ColName> "," <OrderingSpec> ")"} "]"
 --
 data RelationalOp =  
             Filter FromRTable ByPred
@@ -128,12 +124,18 @@ data RelationalOp =
         |   TabExpr `MinusP` TabLiteral --  ^ This is a Minus operation to be used when the left table must be the "Previous" value.
         |   GenUnaryOp OnRTable ByGenUnaryOperation  -- ^ This is a generic unary operation on a RTable
         |   GenBinaryOp TabLiteral TabExpr ByGenBinaryOperation -- ^ this is a generic binary operation on a RTable
+        |   OrderBy [(ColumnName, OrderingSpec)] FromRTable
 
 data ByGenUnaryOperation = ByUnaryOp UnaryRTableOperation         
 data ByGenBinaryOperation = ByBinaryOp BinaryRTableOperation         
 
 -- | <FromRTable> = "From" <TabExpr>
 data FromRTable = From TabExpr
+
+-- | <TabExpr> = "Tab" <RTable> | "Previous"
+data TabExpr = Tab RTable | Previous
+-- | this data type is used for expression where we do not allow the use of the Previous value
+data TabLiteral = TabL RTable 
 
 -- | <TabExprJoin> = <TabExpr> "`On`" <RJoinPredicate
 --data TabExprJoin = TabExpr `JoinOn` RJoinPredicate
@@ -314,6 +316,7 @@ myEtlExpr = EtlMapStart
      -- :-> (EtlC $ Source ["srcCol"] $ Target ["trgCol"] $ By myTransformation (On $ Tab myTable) DontRemoveSrc $ FilterBy myFpred2)         
      -- :-> EtlMapStart
 
+
 -- | Returns a prefix of an ETLMappingExpr that matches a named intermediate result.
 -- For example, below we show a Julius expression where we define an intermediate named result called "myResult".
 -- This result, is used at a later stage in this Julius expression, with the use of the function takeNamedResult.
@@ -491,12 +494,26 @@ evalROpExpr (restExpression :. rop) =
                 -- get previous RCombinedOp operation and table expressions
                 (prevOperation, prevTXEleft, prevTXEright) = evalROpExpr restExpression
 
-            -- the current RCombinedOp is porduced by composing the current function with the previous function
+            -- the current RCombinedOp is produced by composing the current function with the previous function
             in case prevOperation of
                     -- in this case the previous operation is a valid non-empty operation and must be composed with the current one
                     RCombinedOp {rcombOp = prevfunc} -> (RCombinedOp {rcombOp = currfunc . prevfunc}, prevTXEleft, EmptyTab)
                     -- in this case the current Operation is the last one (the previous is just empty and must be ignored)
-                    ROperationEmpty ->  (RCombinedOp {rcombOp = currfunc}, TXE tabExpr, EmptyTab)                    
+                    ROperationEmpty ->  (RCombinedOp {rcombOp = currfunc}, TXE tabExpr, EmptyTab)  
+
+        OrderBy colOrderingSpecList (From tabExpr) ->
+            let -- create current function to be included in a RCombinedOp operation 
+                currfunc :: UnaryRTableOperation
+                currfunc = rO colOrderingSpecList -- this returns a RTable -> RTable function
+                -- get previous RCombinedOp operation and table expressions
+                (prevOperation, prevTXEleft, prevTXEright) = evalROpExpr restExpression
+
+            -- the current RCombinedOp is produced by composing the current function with the previous function
+            in case prevOperation of
+                    -- in this case the previous operation is a valid non-empty operation and must be composed with the current one
+                    RCombinedOp {rcombOp = prevfunc} -> (RCombinedOp {rcombOp = currfunc . prevfunc}, prevTXEleft, EmptyTab)
+                    -- in this case the current Operation is the last one (the previous is just empty and must be ignored)
+                    ROperationEmpty ->  (RCombinedOp {rcombOp = currfunc}, TXE tabExpr, EmptyTab)  
         
         Join (TabL tabl) tabExpr (JoinOn joinPred) ->
             let -- create current function to be included in a RCombinedOp operation 

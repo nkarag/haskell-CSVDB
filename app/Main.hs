@@ -196,6 +196,7 @@ main = do
         
     writeResult fo "_t4.csv" rtmdata4 rtabNew4
     writeResult fo "_t4_J.csv" rtmdata4 rtabNew4_J
+    putStrLn "TEST INNER JOIN"
     T.printRTable rtabNew4_J  
 
     -- *** Test union, interesection, diff
@@ -631,7 +632,7 @@ main = do
     writeResult fo "_t14_dbg_2part.csv" rtmdata14 rtabNew14_dbg_2part
     writeResult fo "_t14_dbg.csv" rtmdata14 rtabNew14_dbg
     writeResult fo "_t14_J.csv" rtmdata14 rtabNew14_J
-
+    putStrLn "Test LEFT JOIN"
     T.printRTable rtabNew14_J
 
 -- Test Right Outer Join
@@ -658,6 +659,7 @@ main = do
         
     writeResult fo "_t15.csv" rtmdata15 rtabNew15
     writeResult fo "_t15_J.csv" rtmdata15 rtabNew15_J
+    putStrLn "Test RIGHT JOIN"
     T.printRTable rtabNew15_J
 
 -- Test Full Outer Join
@@ -695,7 +697,7 @@ main = do
     writeResult fo "_t15_fo2.csv" rtmdata15 rtabNew15fo2
     writeResult fo "_t15_fo_J.csv" rtmdata15 rtabNew15fo_J
     writeResult fo "_t15_fo2_J.csv" rtmdata15 rtabNew15fo2_J
-
+    putStrLn "Test FULL OUTER JOIN"
     T.printRTable rtabNew15fo2_J
         
 
@@ -827,6 +829,8 @@ main = do
     writeResult fo "_t17.csv" rtmdata17 rtabNew17
     writeResult fo "_t17_J.csv" rtmdata17 rtabNew17_J
 
+    putStrLn "#### TEST GROUP BY ###"
+    T.printRTable rtabNew 
     T.printRTable rtabNew17_J
     
     --print csvNew2
