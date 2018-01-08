@@ -130,108 +130,111 @@ runCM = runColMapping
 runColMapping :: RColMapping -> RTable -> RTable
 runColMapping ColMapEmpty rtabS = rtabS
 runColMapping rmap rtabS = 
-    case rmap of 
-        RMap1x1 {srcCol = src, trgCol = trg, removeSrcCol = rmvFlag, transform1x1 = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
-                srcRtuple <- f pred rtabS                                                                        
-                let 
-                    -- 1. get original column value 
-                    srcValue = getRTupColValue src srcRtuple
-                    -- srcValue = HM.lookupDefault    Null -- return Null if value cannot be found based on column name 
-                    --                                src   -- column name to look for (source) - i.e., the key in the HashMap
-                    --                                srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
-                    
-                    -- 2. apply transformation to retrieve new column value
-                    trgValue = xform srcValue                                         
-                    
-                    -- 3. remove the original ColumnName, Value mapping from the RTuple
-                    rtupleTemp = 
-                        case rmvFlag of
-                            Yes -> HM.delete src srcRtuple
-                            No  -> srcRtuple
-                    
-                    -- 4. insert new (ColumnName, Value) pair and thus create the target RTuple
-                    trgRtuple = HM.insert trg trgValue rtupleTemp
-                
-                -- return new RTable
-                return trgRtuple
-
-        RMapNx1 {srcColGrp = srcL, trgCol = trg, removeSrcCol = rmvFlag, transformNx1 = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
-                srcRtuple <- f pred rtabS                                                                        
-                let 
-                    -- 1. get original column value (in this case it is a list of values)
-                    srcValueL = Data.List.map ( \src ->  getRTupColValue src srcRtuple
-
-                                    -- \src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
-                                    --                                 src   -- column name to look for (source) - i.e., the key in the HashMap
-                                    --                                 srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
-                                    ) srcL
-                    
-                    -- 2. apply transformation to retrieve new column value
-                    trgValue = xform srcValueL                                         
-                    
-                    -- 3. remove the original (ColumnName, Value) mappings from the RTuple (i.e., remove ColumnNames mentioned in the RColMapping from source RTuple)
-                    rtupleTemp = 
-                        case rmvFlag of
-                            Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
-                            No  -> srcRtuple
-                    
-                    -- 4. insert new ColumnName, Value mapping as the target RTuple must be
-                    trgRtuple = HM.insert trg trgValue rtupleTemp
-                -- return new RTable
-                return trgRtuple
-
-        RMap1xN {srcCol = src, trgColGrp = trgL, removeSrcCol = rmvFlag, transform1xN = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
-                srcRtuple <- f pred rtabS                                                                        
-                let 
-                    -- 1. get original column value 
-                    srcValue = getRTupColValue src srcRtuple
-
-                    -- srcValue = HM.lookupDefault    Null -- return Null if value cannot be found based on column name 
-                    --                                src   -- column name to look for (source) - i.e., the key in the HashMap
-                    --                                srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
-
-                    -- 2. apply transformation to retrieve new column value list
-                    trgValueL = xform srcValue                                         
-
-                    -- 3. remove the original ColumnName, Value mapping from the RTuple
-                    rtupleTemp = 
-                        case rmvFlag of
-                            Yes -> HM.delete src srcRtuple
-                            No  -> srcRtuple
-
-                    -- 4. insert new (ColumnName, Value) pairs to the target RTuple
-                    tempL = Data.List.zip trgL trgValueL
-                    trgRtuple = HM.union (HM.fromList tempL) rtupleTemp  -- implement as a hashmap union between new (columnName,value) pairs and source tuple
+    if isRTabEmpty rtabS
+        then emptyRTable
+        else 
+            case rmap of 
+                RMap1x1 {srcCol = src, trgCol = trg, removeSrcCol = rmvFlag, transform1x1 = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
+                        srcRtuple <- f pred rtabS                                                                        
+                        let 
+                            -- 1. get original column value 
+                            srcValue = getRTupColValue src srcRtuple
+                            -- srcValue = HM.lookupDefault    Null -- return Null if value cannot be found based on column name 
+                            --                                src   -- column name to look for (source) - i.e., the key in the HashMap
+                            --                                srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
+                            
+                            -- 2. apply transformation to retrieve new column value
+                            trgValue = xform srcValue                                         
+                            
+                            -- 3. remove the original ColumnName, Value mapping from the RTuple
+                            rtupleTemp = 
+                                case rmvFlag of
+                                    Yes -> HM.delete src srcRtuple
+                                    No  -> srcRtuple
+                            
+                            -- 4. insert new (ColumnName, Value) pair and thus create the target RTuple
+                            trgRtuple = HM.insert trg trgValue rtupleTemp
                         
-                -- return new RTable
-                return trgRtuple
+                        -- return new RTable
+                        return trgRtuple
 
-        RMapNxM {srcColGrp = srcL, trgColGrp = trgL, removeSrcCol = rmvFlag, transformNxM = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
-                srcRtuple <- f pred rtabS                                                                        
-                let 
-                    -- 1. get original column value (in this case it is a list of values)
-                    srcValueL = Data.List.map (  \src ->  getRTupColValue src srcRtuple
+                RMapNx1 {srcColGrp = srcL, trgCol = trg, removeSrcCol = rmvFlag, transformNx1 = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
+                        srcRtuple <- f pred rtabS                                                                        
+                        let 
+                            -- 1. get original column value (in this case it is a list of values)
+                            srcValueL = Data.List.map ( \src ->  getRTupColValue src srcRtuple
 
-                                    -- \src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
-                                    --                                 src   -- column name to look for (source) - i.e., the key in the HashMap
-                                    --                                 srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
-                                    ) srcL
-                    
-                    -- 2. apply transformation to retrieve new column value
-                    trgValueL = xform srcValueL                                         
+                                            -- \src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
+                                            --                                 src   -- column name to look for (source) - i.e., the key in the HashMap
+                                            --                                 srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
+                                            ) srcL
+                            
+                            -- 2. apply transformation to retrieve new column value
+                            trgValue = xform srcValueL                                         
+                            
+                            -- 3. remove the original (ColumnName, Value) mappings from the RTuple (i.e., remove ColumnNames mentioned in the RColMapping from source RTuple)
+                            rtupleTemp = 
+                                case rmvFlag of
+                                    Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
+                                    No  -> srcRtuple
+                            
+                            -- 4. insert new ColumnName, Value mapping as the target RTuple must be
+                            trgRtuple = HM.insert trg trgValue rtupleTemp
+                        -- return new RTable
+                        return trgRtuple
 
-                    -- 3. remove the original ColumnName, Value mapping from the RTuple
-                    rtupleTemp = 
-                        case rmvFlag of
-                            Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
-                            No  -> srcRtuple
+                RMap1xN {srcCol = src, trgColGrp = trgL, removeSrcCol = rmvFlag, transform1xN = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
+                        srcRtuple <- f pred rtabS                                                                        
+                        let 
+                            -- 1. get original column value 
+                            srcValue = getRTupColValue src srcRtuple
 
-                    -- 4. insert new (ColumnName, Value) pairs to the target RTuple
-                    tempL = Data.List.zip trgL trgValueL
-                    trgRtuple = HM.union (HM.fromList tempL) rtupleTemp  -- implement as a hashmap union between new (columnName,value) pairs and source tuple
-                        
-                -- return new RTable
-                return trgRtuple
+                            -- srcValue = HM.lookupDefault    Null -- return Null if value cannot be found based on column name 
+                            --                                src   -- column name to look for (source) - i.e., the key in the HashMap
+                            --                                srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
+
+                            -- 2. apply transformation to retrieve new column value list
+                            trgValueL = xform srcValue                                         
+
+                            -- 3. remove the original ColumnName, Value mapping from the RTuple
+                            rtupleTemp = 
+                                case rmvFlag of
+                                    Yes -> HM.delete src srcRtuple
+                                    No  -> srcRtuple
+
+                            -- 4. insert new (ColumnName, Value) pairs to the target RTuple
+                            tempL = Data.List.zip trgL trgValueL
+                            trgRtuple = HM.union (HM.fromList tempL) rtupleTemp  -- implement as a hashmap union between new (columnName,value) pairs and source tuple
+                                
+                        -- return new RTable
+                        return trgRtuple
+
+                RMapNxM {srcColGrp = srcL, trgColGrp = trgL, removeSrcCol = rmvFlag, transformNxM = xform, srcRTupleFilter = pred} -> do  -- an RTable is a Monad just like a list is a Monad, representing a non-deterministic value
+                        srcRtuple <- f pred rtabS                                                                        
+                        let 
+                            -- 1. get original column value (in this case it is a list of values)
+                            srcValueL = Data.List.map (  \src ->  getRTupColValue src srcRtuple
+
+                                            -- \src -> HM.lookupDefault       Null -- return Null if value cannot be found based on column name 
+                                            --                                 src   -- column name to look for (source) - i.e., the key in the HashMap
+                                            --                                 srcRtuple  -- source RTuple (i.e., a HashMap ColumnName RDataType)
+                                            ) srcL
+                            
+                            -- 2. apply transformation to retrieve new column value
+                            trgValueL = xform srcValueL                                         
+
+                            -- 3. remove the original ColumnName, Value mapping from the RTuple
+                            rtupleTemp = 
+                                case rmvFlag of
+                                    Yes -> HM.filterWithKey (\colName _ -> Data.List.notElem colName srcL) srcRtuple
+                                    No  -> srcRtuple
+
+                            -- 4. insert new (ColumnName, Value) pairs to the target RTuple
+                            tempL = Data.List.zip trgL trgValueL
+                            trgRtuple = HM.union (HM.fromList tempL) rtupleTemp  -- implement as a hashmap union between new (columnName,value) pairs and source tuple
+                                
+                        -- return new RTable
+                        return trgRtuple
 
 -- | An ETL operation applied to an RTable can be either an ROperation (a relational agebra operation like join, filter etc.) defined in 'RTable' module,
 --   or an RColMapping applied to an RTable

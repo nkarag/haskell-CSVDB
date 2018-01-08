@@ -1,49 +1,16 @@
 ============================
 == IN PROGRESS
-============================			
-<<<20171214		Check **all** relational operations and Column Mappings in order to gaurante that:
-										data ROperation = 
-									      ROperationEmpty
-									    | RUnion   -- ^ Union 
-									    | RInter     -- ^ Intersection
-									    | RDiff    -- ^ Difference
-								OK	    | RPrj    { colPrjList :: [ColumnName] }   -- ^ Projection
-								OK	    | RFilter { fpred :: RPredicate }   -- ^ Filter
-									    | RInJoin { jpred :: RJoinPredicate }     -- ^ Inner Join (any type of join predicate allowed)
-									    | RLeftJoin { jpred :: RJoinPredicate }   -- ^ Left Outer Join (any type of join predicate allowed)    
-									    | RRightJoin { jpred :: RJoinPredicate }  -- ^ Right Outer Join (any type of join predicate allowed)        
-									    | RAggregate { aggList :: [RAggOperation] } -- Performs some aggregation operations on specific columns and returns a singleton RTable
-									    | RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] } -- ^ A GroupBy operation
-									    | RCombinedOp { rcombOp :: UnaryRTableOperation  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . 
-									    | RBinOp { rbinOp :: BinaryRTableOperation } -- ^ A generic binary ROperation.
-									    | ROrderBy { colOrdList :: [(ColumnName, OrderingSpec)] } 
-
-
-									    runColMapping :: RColMapping -> RTable -> RTable
-
-				1. If an empty RTable is given as input, then an empty RTable is returned in the output
-				2. If the result of the operation returns no rows, then an empty RTable is returned
-			OK	3. The etlRes ::
-						       ETLMapping  -- ^ input ETLMapping
-    						-> RTabResult   -- ^ output RTabResult
-    				must return 0 rows, if the returned RTable is empty  => OK : V.length resultRtab  returns 0 for an empty vector
-
-    		OK	4. Also make printRTable to work when an empty RTable is passed
-				
-
-
+============================					
 
 <<<20171205		 Implement, the following relational (DML / DDL) operations and Julius expressions:
-					* (DONE) Insert (insert an RTuple to an RTable)
-					* Update (update columns of all RTuple that apply )
+					* (DONE) Insert (insert an RTuple to an RTable) 
+						(Pending) - Julius expression
+					* (DONE) Update (update specified columns of all RTuples that qualify)
+						(Pending) - Julius expression
+					* Merge (use insert and update from above)
 					* Create RTable
 					* Create RTable as Select
 
-
-<<<20171201		Implement RTable as a class for which Data Types like CSV can be instances.
-
-				Then separate RTable / Julius / CSV library from CSVdb, which is just an implementation of a CSVdb
-				using this library, just as myhousehold is another one.
 
 
 <<<20170427		implement 
@@ -53,13 +20,37 @@
 					* (DONE) Change the AggOperation data type from a sum type to a product type and implement the various agg operations as values of the product type.
 					* (DONE) addSurrogateKey operation
 
-					* Dedublicate and 
-					* Merge operations 
+					* Dedublicate 
+					
 				with Data.List groupby and nubby functions
 
 ============================
 == OPEN (Not Started)
 ============================
+
+<<<20171223		When you use Projection (Select in Julius) you cannot specify the order that the returned columns will have.		
+
+<<<20171223		Include Error Handling in all operations returning an RTable (i.e., all ROperations and ColMappings).
+				E.g., Use ErrorT from the transformers library (https://hackage.haskell.org/package/transformers) 
+				Control.Monad.Trans.Error to return an Either data type, where the left part will be an error message indicating
+				why the RTable operation failed, and the right part will be the RTable result.
+
+<<<20171201		Implement a typeclass RTableTrans for enabling the abstraction of an RTable over different data types. For example the Data Type CSV can be an instance of this 					typeclass.
+				This typeclass must expose functions:
+					toRTable :: a -> RTable
+					fromRTable :: RTable -> a
+
+
+				Then separate RTable / Julius / CSV library from CSVdb, which is just an implementation of a CSVdb
+				using this library, just as myhousehold is another one.
+
+<<<20180102		Future features for Julius:
+
+				Future features:
+				- Add DDL and DML clauses (e.g., MERGE)
+				- Add ETL specific clauses (get examples from Kimball), like addSurrogateKey, getDelta, SCDimensions, etc.)
+				- Add parallel clause
+
 
 <<<20170918		Make basic Data Types strict based on: https://www.fpcomplete.com/blog/2017/09/all-about-strictness
 
@@ -107,6 +98,38 @@
 ============================
 == COMPLETED
 ============================
+
+<<<20171214		Check **all** relational operations and Column Mappings in order to gaurante that:
+										data ROperation = 
+								OK	      ROperationEmpty
+								OK	    | RUnion   -- ^ Union 
+								OK	    | RInter     -- ^ Intersection
+								OK	    | RDiff    -- ^ Difference
+								OK	    | RPrj    { colPrjList :: [ColumnName] }   -- ^ Projection
+								OK	    | RFilter { fpred :: RPredicate }   -- ^ Filter
+								OK	    | RInJoin { jpred :: RJoinPredicate }     -- ^ Inner Join (any type of join predicate allowed)
+								OK	    | RLeftJoin { jpred :: RJoinPredicate }   -- ^ Left Outer Join (any type of join predicate allowed)    
+								OK	    | RRightJoin { jpred :: RJoinPredicate }  -- ^ Right Outer Join (any type of join predicate allowed)        
+								OK	    | RAggregate { aggList :: [RAggOperation] } -- Performs some aggregation operations on specific columns and returns a singleton RTable
+								OK	    | RGroupBy  { gpred :: RGroupPredicate, aggList :: [RAggOperation], colGrByList :: [ColumnName] } -- ^ A GroupBy operation
+								OK	    | RCombinedOp { rcombOp :: UnaryRTableOperation  }   -- ^ A combination of unary ROperations e.g.,   (p plist).(f pred)  (i.e., RPrj . 
+								OK	    | RBinOp { rbinOp :: BinaryRTableOperation } -- ^ A generic binary ROperation.
+								OK	    | ROrderBy { colOrdList :: [(ColumnName, OrderingSpec)] } 
+
+
+								OK	    runColMapping :: RColMapping -> RTable -> RTable
+
+				1. If an empty RTable is given as input, then an empty RTable is returned in the output
+				2. If the result of the operation returns no rows, then an empty RTable is returned
+			OK	3. The etlRes ::
+						       ETLMapping  -- ^ input ETLMapping
+    						-> RTabResult   -- ^ output RTabResult
+    				must return 0 rows, if the returned RTable is empty  => OK : V.length resultRtab  returns 0 for an empty vector
+
+    		OK	4. Also make printRTable to work when an empty RTable is passed
+20171224>>> (Completion)
+
+
 <<<20171205		Reimplement inner join so as the common columns to follow "oracle logic" (see below). Then revisit also outer joins.
 
 				"Oracle Logic" for common columns names:

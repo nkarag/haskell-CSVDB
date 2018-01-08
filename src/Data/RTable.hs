@@ -141,8 +141,12 @@ module Data.RTable
         ,printRTable
         ,rtupleToList
         ,joinRTuples
-        ,insertPrepend
-        ,insertAppend
+        ,insertPrependRTab
+        ,insertAppendRTab
+        ,updateRTab
+        ,rtabFoldr'
+        ,rtabFoldl'
+        ,rtabMap
     ) where
 
 import Debug.Trace
@@ -438,8 +442,11 @@ getRTupColValue =  rtupLookupDefault Null  -- HM.lookupDefault Null
        RTuple        -- ^ Input RTuple
     -> ColumnName    -- ^ ColumnName key
     -> RDataType     -- ^ Output value
-(<!>) = -- flip getRTupColValue
-        (HM.!)
+(<!>) t c = -- flip getRTupColValue
+       -- (HM.!)
+       case rtupLookup c t of
+            Just v -> v
+            Nothing -> error $ "*** Error in function Data.RTable.(<!>): Column \"" ++ c ++ "\" does not exist! ***" 
 
 
 -- | Returns the 1st parameter if this is not Null, otherwise it returns the 2nd. 
@@ -664,6 +671,19 @@ rTimeStampToRText "YYYYMMDD-HH24.MI.SS" ts =    let -- timeString = show (year t
                                                     !dummy5 = trace ("expand (minutes ts) : " ++ expand (minutes ts)) True
                                                     !dummy6 = trace ("expand (seconds ts) : " ++ expand (seconds ts)) True-}
                                                 in RText $ T.pack timeString
+rTimeStampToRText "YYYYMMDD" ts =               let 
+                                                    timeString = expand (year ts) ++ expand (month ts) ++ expand (day ts) 
+                                                    expand i = if i < 10 then "0"++ (show i) else show i
+                                                in RText $ T.pack timeString
+rTimeStampToRText "YYYYMM" ts =                 let 
+                                                    timeString = expand (year ts) ++ expand (month ts) 
+                                                    expand i = if i < 10 then "0"++ (show i) else show i
+                                                in RText $ T.pack timeString
+rTimeStampToRText "YYYY" ts =                   let 
+                                                    timeString = show $ year ts -- expand (year ts)
+                                                    -- expand i = if i < 10 then "0"++ (show i) else show i
+                                                in RText $ T.pack timeString
+
 
 
 -- | Metadata for an RTable
@@ -1235,7 +1255,32 @@ isNullRTuple t =
             else False
 
 
--- * ########## RTable Operations ##############
+-- * ########## RTable "Functional" Operations ##############
+
+-- | This is a fold operation on a RTable.
+-- It is similar with :
+-- @
+--  foldr' :: (a -> b -> b) -> b -> Vector a -> b Source #
+-- @
+-- of Vector, which is an O(n) Right fold with a strict accumulator
+rtabFoldr' :: (RTuple -> RTable -> RTable) -> RTable -> RTable -> RTable
+rtabFoldr' f accum rtab = V.foldr' f accum rtab
+
+-- | This is a fold operation on a RTable.
+-- It is similar with :
+-- @
+--  foldl' :: (a -> b -> a) -> a -> Vector b -> a
+-- @
+-- of Vector, which is an O(n) Left fold with a strict accumulator
+rtabFoldl' :: (RTable -> RTuple -> RTable) -> RTable -> RTable -> RTable
+rtabFoldl' f accum rtab = V.foldl' f accum rtab
+
+
+-- | Map function over an RTable
+rtabMap :: (RTuple -> RTuple) -> RTable -> RTable
+rtabMap f rtab = V.map f rtab 
+
+-- * ########## RTable Relational Operations ##############
 
 -- | Number of RTuples returned by an RTable operation
 type RTuplesRet = Sum Int
@@ -1339,7 +1384,7 @@ runProjection colNamList irtab =
                         let 
                             -- 2. create the new RTuple                        
                             valList = Data.List.map (\(Just v) -> v) srcValueL -- get rid of Maybe
-                            targetRtuple = HM.fromList (Data.List.zip colNamList valList)
+                            targetRtuple = rtupleFromList (Data.List.zip colNamList valList) -- HM.fromList
                         in return targetRtuple                        
 
 
@@ -1387,15 +1432,20 @@ runInnerJoin ::
     -> RTable
     -> RTable
     -> RTable
-runInnerJoin jpred irtab1 irtab2 =  do
-    rtup1 <- irtab1
-    rtup2 <- irtab2
-    let targetRtuple = 
-            if (jpred rtup1 rtup2)
-            then HM.union rtup1 rtup2                 
-            else HM.empty
-    removeEmptyRTuples (return targetRtuple)
-        where removeEmptyRTuples = f (not.isRTupEmpty) 
+runInnerJoin jpred irtab1 irtab2 =  
+    if (isRTabEmpty irtab1) || (isRTabEmpty irtab2)
+        then
+            emptyRTable
+        else 
+            do 
+                rtup1 <- irtab1
+                rtup2 <- irtab2
+                let targetRtuple = 
+                        if (jpred rtup1 rtup2)
+                        then HM.union rtup1 rtup2                 
+                        else HM.empty
+                removeEmptyRTuples (return targetRtuple)
+                    where removeEmptyRTuples = f (not.isRTupEmpty) 
 
 -- Inner Join with Oracle DB's convention for common column names.
 -- When we have two tuples t1 and t2 with a common column name (lets say "Common"), then the resulting tuple after a join
@@ -1406,18 +1456,23 @@ runInnerJoinO ::
     -> RTable
     -> RTable
     -> RTable
-runInnerJoinO jpred tabDriver tabProbed =  do
-    rtupDrv <- tabDriver
-    -- this is the equivalent of a nested loop with tabDriver playing the role of the driving table and tabProbed the probed table
-    V.foldr' (\t accum -> 
-                if (jpred rtupDrv t) 
-                    then 
-                        -- insert joined tuple to result table (i.e. the accumulator)
-                        insertAppend (joinRTuples rtupDrv t) accum
-                    else 
-                        -- keep the accumulator unchanged
-                        accum
-            ) emptyRTable tabProbed 
+runInnerJoinO jpred tabDriver tabProbed =  
+    if isRTabEmpty tabDriver || isRTabEmpty tabProbed
+        then
+            emptyRTable
+        else 
+            do 
+                rtupDrv <- tabDriver
+                -- this is the equivalent of a nested loop with tabDriver playing the role of the driving table and tabProbed the probed table
+                V.foldr' (\t accum -> 
+                            if (jpred rtupDrv t) 
+                                then 
+                                    -- insert joined tuple to result table (i.e. the accumulator)
+                                    insertAppendRTab (joinRTuples rtupDrv t) accum
+                                else 
+                                    -- keep the accumulator unchanged
+                                    accum
+                        ) emptyRTable tabProbed 
 
 
 -- | Joins two RTuples into one. 
@@ -1519,19 +1574,30 @@ runLeftJoin ::
     -> RTable
     -> RTable
 runLeftJoin jpred preservingTab tab = 
-    let 
-        unionFstPart = iJ jpred preservingTab tab 
-        -- project only the preserving tab's columns
-        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+    if isRTabEmpty preservingTab
+        then 
+            emptyRTable
+        else
+            if isRTabEmpty tab
+                then
+                    -- return the preserved tab 
+                    preservingTab
 
-        -- the second part are the rows from the preserving table that dont join
-        -- we will use the Difference operations for this
-        unionSndPart = 
-            let 
-                difftab = d preservingTab fstPartProj -- unionFstPart
-                -- now enhance the result with the columns of the right table
-            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
-    in u unionFstPart unionSndPart
+                else 
+                    -- we know that both the preservingTab and tab are non empty 
+                    let 
+                        unionFstPart = iJ jpred preservingTab tab 
+                        -- project only the preserving tab's columns
+                        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+
+                        -- the second part are the rows from the preserving table that dont join
+                        -- we will use the Difference operations for this
+                        unionSndPart = 
+                            let 
+                                difftab = d preservingTab fstPartProj -- unionFstPart
+                                -- now enhance the result with the columns of the right table
+                            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
+                    in u unionFstPart unionSndPart
 
 
 -- | RTable Right Outer Join Operator
@@ -1555,20 +1621,29 @@ runRightJoin ::
     -> RTable
     -> RTable
 runRightJoin jpred tab preservingTab =
-    let 
-        unionFstPart = iJ jpred preservingTab tab --tab    -- we used the preserving table as the left table in the inner join, 
-                                                    -- in order to retain the original column names for the common columns
-        -- project only the preserving tab's columns
-        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+    if isRTabEmpty preservingTab
+        then 
+            emptyRTable
+        else
+            if isRTabEmpty tab
+                then
+                    preservingTab        
+                else     
+                    -- we know that both the preservingTab and tab are non empty 
+                    let 
+                        unionFstPart = iJ jpred preservingTab tab --tab    -- we used the preserving table as the left table in the inner join, 
+                                                                    -- in order to retain the original column names for the common columns
+                        -- project only the preserving tab's columns
+                        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
 
-        -- the second part are the rows from the preserving table that dont join
-        -- we will use the Difference operations for this
-        unionSndPart = 
-            let 
-                difftab = d preservingTab   fstPartProj -- unionFstPart 
-                -- now enhance the result with the columns of the left table
-            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
-    in u unionFstPart unionSndPart
+                        -- the second part are the rows from the preserving table that dont join
+                        -- we will use the Difference operations for this
+                        unionSndPart = 
+                            let 
+                                difftab = d preservingTab   fstPartProj -- unionFstPart 
+                                -- now enhance the result with the columns of the left table
+                            in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
+                    in u unionFstPart unionSndPart
 
 
 
@@ -1627,17 +1702,21 @@ runUnion ::
     RTable
     -> RTable
     -> RTable
-runUnion rt1 rt2 = 
-    -- construct the union result by concatenating the left table with the subset of tuple from the right table that do
-    -- not appear in the left table (i.e, remove dublicates)
-    rt1 V.++ (V.foldr (un) emptyRTable rt2)
-    where
-        un :: RTuple -> RTable -> RTable
-        un tupRight acc = 
-            -- Can we find tupRight in the left table?            
-            if didYouFindIt tupRight rt1 
-                then acc   -- then discard tuplRight ,leave result unchanged          
-                else V.snoc acc tupRight  -- else insert tupRight into final result
+runUnion rt1 rt2 =
+    if isRTabEmpty rt1 && isRTabEmpty rt2
+        then 
+            emptyRTable
+        else  
+            -- construct the union result by concatenating the left table with the subset of tuple from the right table that do
+            -- not appear in the left table (i.e, remove dublicates)
+            rt1 V.++ (V.foldr (un) emptyRTable rt2)
+            where
+                un :: RTuple -> RTable -> RTable
+                un tupRight acc = 
+                    -- Can we find tupRight in the left table?            
+                    if didYouFindIt tupRight rt1 
+                        then acc   -- then discard tuplRight ,leave result unchanged          
+                        else V.snoc acc tupRight  -- else insert tupRight into final result
 
 
 
@@ -1649,16 +1728,20 @@ runIntersect ::
     RTable
     -> RTable
     -> RTable
-runIntersect rt1 rt2 = 
-    -- construct the intersect result by traversing the left table and checking if each tuple exists in the right table
-    V.foldr (intsect) emptyRTable rt1
-    where
-        intsect :: RTuple -> RTable -> RTable
-        intsect tupLeft acc = 
-            -- Can we find tupLeft in the right table?            
-            if didYouFindIt tupLeft rt2 
-                then V.snoc acc tupLeft  -- then insert tupLeft into final result
-                else acc  -- else discard tuplLeft ,leave result unchanged          
+runIntersect rt1 rt2 =
+    if isRTabEmpty rt1 || isRTabEmpty rt2 
+        then
+            emptyRTable
+        else 
+            -- construct the intersect result by traversing the left table and checking if each tuple exists in the right table
+            V.foldr (intsect) emptyRTable rt1
+            where
+                intsect :: RTuple -> RTable -> RTable
+                intsect tupLeft acc = 
+                    -- Can we find tupLeft in the right table?            
+                    if didYouFindIt tupLeft rt2 
+                        then V.snoc acc tupLeft  -- then insert tupLeft into final result
+                        else acc  -- else discard tuplLeft ,leave result unchanged          
 
 {-
 runIntersect rt1 rt2 = 
@@ -1693,16 +1776,24 @@ runDiff ::
     RTable
     -> RTable
     -> RTable
-runDiff rt1 rt2 = 
-    -- construct the diff result by traversing the left table and checking if each tuple exists in the right table
-    V.foldr (diff) emptyRTable rt1
-    where
-        diff :: RTuple -> RTable -> RTable
-        diff tupLeft acc = 
-            -- Can we find tupLeft in the right table?            
-            if didYouFindIt tupLeft rt2 
-                then acc  -- then discard tuplLeft ,leave result unchanged
-                else V.snoc acc tupLeft  -- else insert tupLeft into final result
+runDiff rt1 rt2 =
+    if isRTabEmpty rt1
+        then
+            emptyRTable
+        else 
+            if isRTabEmpty rt2
+                then
+                    rt1
+                else  
+                    -- construct the diff result by traversing the left table and checking if each tuple exists in the right table
+                    V.foldr (diff) emptyRTable rt1
+                    where
+                        diff :: RTuple -> RTable -> RTable
+                        diff tupLeft acc = 
+                            -- Can we find tupLeft in the right table?            
+                            if didYouFindIt tupLeft rt2 
+                                then acc  -- then discard tuplLeft ,leave result unchanged
+                                else V.snoc acc tupLeft  -- else insert tupLeft into final result
 
 -- Important Note:
 -- we need to implement are own equality comparison function "areTheyEqual" and not rely on the instance of Eq defined for RDataType above
@@ -1855,39 +1946,42 @@ runOrderBy ::
     ->  RTable -- ^ Input RTable
     ->  RTable -- ^ Output RTable
 runOrderBy ordSpec rtab = 
-    let unsortedRTupList = rtableToList rtab
-        sortedRTupList = Data.List.sortBy (\t1 t2 -> compareTuples ordSpec t1 t2) unsortedRTupList
-    in rtableFromList sortedRTupList
-    where 
-        compareTuples :: [(ColumnName, OrderingSpec)] -> RTuple -> RTuple -> Ordering
-        compareTuples [] t1 t2 = EQ
-        compareTuples ((col, colordspec) : rest) t1 t2 = 
-            -- if they are equal or both Null on the column in question, then go to the next column
-            if nvl (t1 <!> col) (RText "I am Null baby!") == nvl (t2 <!> col) (RText "I am Null baby!")
-                then compareTuples rest t1 t2
-                else -- Either one of the two is Null or are Not Equal
-                     -- so we need to compare t1 versus t2
-                     -- the GT, LT below refer to t1 wrt to t2
-                     -- In the following we treat Null as the maximum value (anything compared to Null is smaller).
-                     -- This way Nulls are send at the end (i.e., the default is "Nulls Last" in SQL parlance)
-                    if isNull (t1 <!> col)
-                        then 
-                            case colordspec of
-                                Asc ->  GT -- t1 is GT than t2 (Nulls go to the end)
-                                Desc -> LT
-                        else 
-                            if isNull (t2 <!> col)
-                                then 
-                                    case colordspec of
-                                        Asc ->  LT -- t1 is LT than t2 (Nulls go to the end)
-                                        Desc -> GT
-                            else
-                                -- here we cant have Nulls
-                                case compare (t1 <!> col) (t2 <!> col) of
-                                    GT -> if colordspec == Asc 
-                                            then GT else LT
-                                    LT -> if colordspec == Asc 
-                                            then LT else GT
+    if isRTabEmpty rtab
+        then emptyRTable
+    else 
+        let unsortedRTupList = rtableToList rtab
+            sortedRTupList = Data.List.sortBy (\t1 t2 -> compareTuples ordSpec t1 t2) unsortedRTupList
+        in rtableFromList sortedRTupList
+        where 
+            compareTuples :: [(ColumnName, OrderingSpec)] -> RTuple -> RTuple -> Ordering
+            compareTuples [] t1 t2 = EQ
+            compareTuples ((col, colordspec) : rest) t1 t2 = 
+                -- if they are equal or both Null on the column in question, then go to the next column
+                if nvl (t1 <!> col) (RText "I am Null baby!") == nvl (t2 <!> col) (RText "I am Null baby!")
+                    then compareTuples rest t1 t2
+                    else -- Either one of the two is Null or are Not Equal
+                         -- so we need to compare t1 versus t2
+                         -- the GT, LT below refer to t1 wrt to t2
+                         -- In the following we treat Null as the maximum value (anything compared to Null is smaller).
+                         -- This way Nulls are send at the end (i.e., the default is "Nulls Last" in SQL parlance)
+                        if isNull (t1 <!> col)
+                            then 
+                                case colordspec of
+                                    Asc ->  GT -- t1 is GT than t2 (Nulls go to the end)
+                                    Desc -> LT
+                            else 
+                                if isNull (t2 <!> col)
+                                    then 
+                                        case colordspec of
+                                            Asc ->  LT -- t1 is LT than t2 (Nulls go to the end)
+                                            Desc -> GT
+                                else
+                                    -- here we cant have Nulls
+                                    case compare (t1 <!> col) (t2 <!> col) of
+                                        GT -> if colordspec == Asc 
+                                                then GT else LT
+                                        LT -> if colordspec == Asc 
+                                                then LT else GT
 
 rG = runGroupBy
 
@@ -1914,43 +2008,64 @@ runGroupBy ::
     -> RTable            -- ^ input RTable
     -> RTable            -- ^ output RTable
 runGroupBy gpred aggOps cols rtab =  
-    let -- rtupList = V.toList rtab
-        
-        -- 1. form the groups of RTuples
-            -- a. first sort the Rtuples based on the grouping predicate
-            -- This is a very important step if we want the groupBy operation to work. This is because grouping on lists is
-            -- implemented like this: group "Mississippi" = ["M","i","ss","i","ss","i","pp","i"]
-            -- So we have to sort the list first in order to get the right grouping:
-            -- group (sort "Mississippi") = ["M","iiii","pp","ssss"]
-        
-        listOfRTupSorted = rtableToList $ runOrderBy (createOrderingSpec cols) rtab
-           -- Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (rtupleToList t1) (rtupleToList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
-                           
-                           -- Data.List.map (HM.fromList) $ Data.List.sort $ Data.List.map (HM.toList) rtupList 
-                            --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
-            -- b then produce the groups
-        listOfRTupGroupLists = Data.List.groupBy gpred listOfRTupSorted
+    if isRTabEmpty rtab
+        then emptyRTable
+        else 
+            let -- rtupList = V.toList rtab
+                
+                -- 1. form the groups of RTuples
+                    -- a. first sort the Rtuples based on the grouping columns
+                    -- This is a very important step if we want the groupBy operation to work. This is because grouping on lists is
+                    -- implemented like this: group "Mississippi" = ["M","i","ss","i","ss","i","pp","i"]
+                    -- So we have to sort the list first in order to get the right grouping:
+                    -- group (sort "Mississippi") = ["M","iiii","pp","ssss"]
+                
+                listOfRTupSorted = rtableToList $ runOrderBy (createOrderingSpec cols) rtab
 
-        -- debug
-        -- !dummy = trace (show listOfRTupGroupLists) True
+                -- debug
+               -- !dummy1 = trace (show listOfRTupSorted) True
 
-        -- 2. turn each (sub)list of Rtuples representing a Group into an RTable in order to apply aggregation
-        --    Note: each RTable in this list will hold a group of RTuples that all have the same values in the input grouping columns
-        --    (which must be compatible with the input grouping predicate)
-        listofGroupRtabs = Data.List.map (V.fromList) listOfRTupGroupLists
-        -- 3. We need to keep the values of the grouping columns (e.g., by selecting the fisrt row) from each one of these RTables,
-        --    in order to "join them" with the aggregated RTuples that will be produced by the aggregation operations
-        --    The following will produce a list of singleton RTables.
-        listOfGroupingColumnsRtabs = Data.List.map ( (restrictNrows 1) . (p cols) ) listofGroupRtabs
-        -- 4. Aggregate each group according to input and produce a list of (aggregated singleton RTables)
-        listOfAggregatedRtabs = Data.List.map (rAgg aggOps) listofGroupRtabs
-        -- 5. Join the two list of singleton RTables
-        listOfFinalRtabs = Data.List.zipWith (iJ (\t1 t2 -> True)) listOfGroupingColumnsRtabs listOfAggregatedRtabs
-        -- 6. Union all individual singleton RTables into the final RTable
-    in  Data.List.foldr1 (u) listOfFinalRtabs
-    where
-        createOrderingSpec :: [ColumnName] -> [(ColumnName, OrderingSpec)]
-        createOrderingSpec cols = Data.List.zip cols (Data.List.take (Data.List.length cols) $ Data.List.repeat Asc)
+                   -- Data.List.sortBy (\t1 t2 -> if (gpred t1 t2) then EQ else compare (rtupleToList t1) (rtupleToList t2) ) rtupList --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+                                   
+                                   -- Data.List.map (HM.fromList) $ Data.List.sort $ Data.List.map (HM.toList) rtupList 
+                                    --(t1!(Data.List.head . HM.keys $ t1)) (t2!(Data.List.head . HM.keys $ t2)) ) rtupList
+                    
+                    -- b then produce the groups
+                listOfRTupGroupLists = Data.List.groupBy gpred listOfRTupSorted       
+
+                -- debug
+              --  !dummy2 = trace (show listOfRTupGroupLists) True
+
+                -- 2. turn each (sub)list of Rtuples representing a Group into an RTable in order to apply aggregation
+                --    Note: each RTable in this list will hold a group of RTuples that all have the same values in the input grouping columns
+                --    (which must be compatible with the input grouping predicate)
+                listofGroupRtabs = Data.List.map (rtableFromList) listOfRTupGroupLists
+                -- 3. We need to keep the values of the grouping columns (e.g., by selecting the fisrt row) from each one of these RTables,
+                --    in order to "join them" with the aggregated RTuples that will be produced by the aggregation operations
+                --    The following will produce a list of singleton RTables.
+                listOfGroupingColumnsRtabs = Data.List.map ( (restrictNrows 1) . (p cols) ) listofGroupRtabs
+
+                -- debug
+              --  !dummy3 = trace (show listOfGroupingColumnsRtabs) True
+
+                -- 4. Aggregate each group according to input and produce a list of (aggregated singleton RTables)
+                listOfAggregatedRtabs = Data.List.map (rAgg aggOps) listofGroupRtabs
+
+                -- debug
+              --  !dummy4 = trace (show listOfAggregatedRtabs ) True
+
+                -- 5. Join the two list of singleton RTables
+                listOfFinalRtabs = Data.List.zipWith (iJ (\t1 t2 -> True)) listOfGroupingColumnsRtabs listOfAggregatedRtabs
+
+                -- debug
+              --  !dummy5 = trace (show listOfFinalRtabs) True
+
+
+                -- 6. Union all individual singleton RTables into the final RTable
+            in  Data.List.foldr1 (u) listOfFinalRtabs
+            where
+                createOrderingSpec :: [ColumnName] -> [(ColumnName, OrderingSpec)]
+                createOrderingSpec cols = Data.List.zip cols (Data.List.take (Data.List.length cols) $ Data.List.repeat Asc)
 
 
 rComb = runCombinedROp
@@ -1969,14 +2084,41 @@ runCombinedROp f rtab = f rtab
 -- * ########## RTable DML Operations ##############
 
 
--- O(n) append an RTuple to an RTable
-insertAppend :: RTuple -> RTable -> RTable
-insertAppend rtup rtab = V.snoc rtab rtup
+-- | O(n) append an RTuple to an RTable
+insertAppendRTab :: RTuple -> RTable -> RTable
+insertAppendRTab rtup rtab = V.snoc rtab rtup
 
--- O(n) prepend an RTuple to an RTable
-insertPrepend :: RTuple -> RTable -> RTable
-insertPrepend rtup rtab = V.cons rtup rtab  
+-- | O(n) prepend an RTuple to an RTable
+insertPrependRTab :: RTuple -> RTable -> RTable
+insertPrependRTab rtup rtab = V.cons rtup rtab  
 
+-- | Update an RTable. Input includes a list of (ColumnName, new Value) pairs.
+-- Also a filter predicate is specified in order to restrict the update only to those
+-- rtuples that fulfill the predicate
+updateRTab ::
+        [(ColumnName, RDataType)] -- ^ List of column names to be updated with the corresponding new values
+    ->  RPredicate  -- ^ An RTuple -> Bool function that specifies the RTuples to be updated
+    ->  RTable       -- ^ Input RTable
+    ->  RTable       -- ^ Output RTable
+updateRTab [] _ inputRtab = inputRtab 
+updateRTab ((colName, newVal) : rest) rpred inputRtab = 
+    {-
+        Here is the update algorithm:
+
+        FinalRTable = UNION (Table A) (Table B)
+
+        where
+            Table A = the subset of input RTable that includes the rtuples that satisfy the input RPredicate, with updated values in the
+                        corresponding columns
+            Table B = the subset of input RTable that includes all the rtuples that DONT satisfy the input RPredicate
+    -}
+    if isRTabEmpty inputRtab 
+        then emptyRTable
+        else
+            let 
+                tabA = rtabMap (upsertRTuple colName newVal) (f rpred inputRtab)
+                tabB = f (not . rpred) inputRtab 
+            in updateRTab rest rpred (u tabA tabB)
 
 -- * ########## RTable IO Operations ##############
 
@@ -2009,7 +2151,12 @@ printRTable rtab =
                 printRTabBody listOfLengths $ V.toList rtab
 
                 -- print number of rows returned
-                putStrLn $ "\n"++ (show $ V.length rtab) ++ " rows returned"        
+                let numrows = V.length rtab
+                if numrows == 1
+                    then 
+                        putStrLn $ "\n"++ (show $ numrows) ++ " row returned"        
+                    else
+                        putStrLn $ "\n"++ (show $ numrows) ++ " rows returned"        
 
                 printContLine listOfLengths '-' rtab
                 where
@@ -2194,6 +2341,7 @@ rdataTypeToString rdt =
 
 
 {-
+
 -- | This data type is used in order to be able to print the value of a column of an RTuple
 data ColPrint = ColPrint { colName :: String, val :: String } deriving (Data, G.Generic)
 instance PP.Tabulate ColPrint
@@ -2232,7 +2380,7 @@ printRTable rtab = -- undefined
                                     colNamesList = Data.List.map (show . fst) rtupList  -- [String]
                                     rdatatypesStringfied = Data.List.map (rdataTypeToString . snd) rtupList  -- [String]
                                     map = Data.Map.fromList $  Data.List.zip colNamesList rdatatypesStringfied -- [(String, String)]                                
-                                return colNamesList -- map-}
+                                return colNamesList -- map -}
         PP.ppTable vectorOfprintableRTups
 
 -}
