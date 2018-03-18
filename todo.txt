@@ -1,6 +1,17 @@
 ============================
 == IN PROGRESS
 ============================					
+<<<20171223		When you use Projection (Select in Julius) you cannot specify the order that the returned columns will have.		
+				Decision: leave projection operation as-is, i.e., it return a simple RTable. Implement column ordering via an 
+				RTupleFormat data type
+
+				We need to implement functions:
+
+				(DONE) printfRTable :: RTupleFormat -> RTable -> IO()
+				rtableToCSVformat :: RTupleFormat -> RTableMData -> RTable -> CSV 
+
+				Note: that in rtableToCSV, column ordering (only) is gauranteed again with the input RTableMData input parameter
+
 
 <<<20171205		 Implement, the following relational (DML / DDL) operations and Julius expressions:
 					* (DONE) Insert (insert an RTuple to an RTable) 
@@ -27,8 +38,6 @@
 ============================
 == OPEN (Not Started)
 ============================
-
-<<<20171223		When you use Projection (Select in Julius) you cannot specify the order that the returned columns will have.		
 
 <<<20171223		Include Error Handling in all operations returning an RTable (i.e., all ROperations and ColMappings).
 				E.g., Use ErrorT from the transformers library (https://hackage.haskell.org/package/transformers) 
@@ -98,6 +107,17 @@
 ============================
 == COMPLETED
 ============================
+
+<<<20171223		When you use Projection (Select in Julius) you cannot specify the order that the returned columns will have.		
+				Decision: leave projection operation as-is, i.e., it return a simple RTable. Implement column ordering via an 
+				RTupleFormat data type
+
+				We need to implement functions:
+
+				(DONE) printfRTable :: RTupleFormat -> RTable -> IO()
+
+				Note: that in rtableToCSV, column ordering (only) is gauranteed again with the input RTableMData input parameter
+20180221>>> (Completion)
 
 <<<20171214		Check **all** relational operations and Column Mappings in order to gaurante that:
 										data ROperation = 
@@ -204,7 +224,7 @@
 						1,1descr,category1,newCategory1,1descr
 						2,2descr,category2,,
 
-20171212>>> (Completion)
+20171212>>> (Completion - commit 9adf596215bdc57e717382da6703751128118ac5)
 
 <<<20171129		Implement number formatting in printTable
 

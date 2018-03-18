@@ -37,6 +37,9 @@ module Data.RTable
        -- Relation(..)
         RTable (..)
         ,RTuple (..)
+        ,RTupleFormat (..)
+        ,ColFormatMap
+        ,FormatSpecifier (..)
         ,RPredicate
         ,RGroupPredicate
         ,RJoinPredicate
@@ -123,6 +126,7 @@ module Data.RTable
         --,runCombinedROp 
         ,rComb
         ,stripRText
+        ,removeCharAroundRText
         ,removeColumn
         ,addColumn
         ,isNull
@@ -139,6 +143,7 @@ module Data.RTable
         ,rtuplesRet
         ,getRTuplesRet
         ,printRTable
+        ,printfRTable
         ,rtupleToList
         ,joinRTuples
         ,insertPrependRTab
@@ -147,6 +152,10 @@ module Data.RTable
         ,rtabFoldr'
         ,rtabFoldl'
         ,rtabMap
+        ,genDefaultColFormatMap
+        ,genColFormatMap
+        ,genRTupleFormat
+        ,genRTupleFormatDefault
     ) where
 
 import Debug.Trace
@@ -189,6 +198,8 @@ import Data.Monoid as M
 import Control.Monad.Trans.Writer.Strict (Writer, writer, runWriter, execWriter)
 -- Text.Printf
 import Text.Printf (printf)
+
+-- import Control.Monad.IO.Class (liftIO)
 
 
 {--- Text.PrettyPrint.Tabulate
@@ -392,6 +403,19 @@ instance Num RDataType where
     negate (RDouble i) = RDouble (negate i)
     negate _ = Null
 
+-- | In order to be able to use (/) with RDataType
+instance Fractional RDataType where
+    (/) (RInt i1) (RInt i2) = RDouble $ (fromIntegral i1)/(fromIntegral i2)
+    (/) (RDouble d1) (RInt i2) = RDouble $ (d1)/(fromIntegral i2)
+    (/) (RInt i1) (RDouble d2) = RDouble $ (fromIntegral i1)/(d2)
+    (/) (RDouble d1) (RDouble d2) = RDouble $ d1/d2
+    (/) _ _ = Null
+
+    -- In order to be able to turn a Rational number into an RDataType, e.g. in the case: totamnt / 12.0
+    -- where totamnt = RDouble amnt
+    -- fromRational :: Rational -> a
+    fromRational r = RDouble (fromRational r)
+
 -- | Standard date format
 stdDateFormat = "DD/MM/YYYY"
 
@@ -570,6 +594,11 @@ stripRText ::
 stripRText (RText t) = RText $ T.strip t
 stripRText _ = Null
 
+
+-- | Helper function to remove a character around (from both beginning and end) of an (RText t) value
+removeCharAroundRText :: Char -> RDataType -> RDataType
+removeCharAroundRText ch (RText t) = RText $ T.dropAround (\c -> c == ch) t
+removeCharAroundRText ch _ = Null
 
 -- | RTimestamp data type
 data RTimestamp = RTimestampVal {
@@ -1082,6 +1111,7 @@ raggAvg src trg = RAggOperation {
                                                              cnt =  countFold src trg rtab
                                                         in case (sum,cnt) of
                                                                 (RInt s, RInt c) -> RDouble (fromIntegral s / fromIntegral c)
+                                                                (RDouble s, RInt c) -> RDouble (s / fromIntegral c)
                                                                 (_, _)           -> Null
                                                  )]  
         }        
@@ -1631,18 +1661,27 @@ runRightJoin jpred tab preservingTab =
                 else     
                     -- we know that both the preservingTab and tab are non empty 
                     let 
-                        unionFstPart = iJ jpred preservingTab tab --tab    -- we used the preserving table as the left table in the inner join, 
-                                                                    -- in order to retain the original column names for the common columns
+                        unionFstPart =                             
+                            iJ (flip jpred) preservingTab tab --tab    -- we used the preserving table as the left table in the inner join, 
+                                                                    -- in order to retain the original column names for the common columns 
+                        -- debug
+                        -- !dummy1 = trace ("unionFstPart:\n" ++ show unionFstPart) True
+
                         -- project only the preserving tab's columns
-                        fstPartProj = p (getColumnNamesfromRTab preservingTab) unionFstPart
+                        fstPartProj = 
+                            p (getColumnNamesfromRTab preservingTab) unionFstPart
 
                         -- the second part are the rows from the preserving table that dont join
                         -- we will use the Difference operations for this
                         unionSndPart = 
                             let 
-                                difftab = d preservingTab   fstPartProj -- unionFstPart 
+                                difftab = 
+                                    d preservingTab   fstPartProj -- unionFstPart 
                                 -- now enhance the result with the columns of the left table
                             in iJ (\t1 t2 -> True) difftab (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab tab))
+                        -- debug
+                        -- !dummy2 = trace ("unionSndPart :\n" ++ show unionSndPart) True
+                        -- !dummy3 = trace ("u unionFstPart unionSndPart :\n" ++ (show $ u unionFstPart unionSndPart)) True
                     in u unionFstPart unionSndPart
 
 
@@ -1671,12 +1710,32 @@ foJ = runFullOuterJoin
 
 -- | Implements a Full Outer Join operation between two RTables (any type of join predicate is allowed)
 -- A full outer join is the union of the left and right outer joins respectively.
+-- The common columns will appear from both tables but only the left table column's will retain their original name (just by convention).
 runFullOuterJoin ::
     RJoinPredicate
     -> RTable
     -> RTable
     -> RTable
-runFullOuterJoin jpred leftRTab rightRTab = (lJ jpred leftRTab rightRTab) `u` (rJ jpred leftRTab rightRTab)
+runFullOuterJoin jpred leftRTab rightRTab = -- (lJ jpred leftRTab rightRTab) `u` (rJ jpred leftRTab rightRTab) -- (note that `u` eliminates dublicates)
+    let
+        --
+        -- we want to get to this union:
+        -- (lJ jpred leftRTab rightRTab) `u` (d (rJ jpred leftRTab rightRTab) (ij (flip jpred) rightRTab leftRTab))
+        -- 
+        -- The problem is with the change of column names that are common in both tables. In the right part of the union
+        -- rightTab has preserved its original column names while in the left part the have changed to "_1" suffix. 
+        -- So we cant do the union as is, we need to change the second part of the union (right one) to have the same column names
+        -- as the firts part, i.e., original names for leftTab and changed names for rightTab.
+        --
+        unionFstPart = lJ jpred leftRTab rightRTab -- in unionFstPart rightTab's columns have changed names
+        
+        -- we need to construct the 2nd part of the union with leftTab columns unchanged and rightTab changed        
+        unionSndPartTemp1 = d (rJ jpred leftRTab rightRTab) (iJ (flip jpred) rightRTab leftRTab)        
+        -- isolate the columns of the rightTab
+        unionSndPartTemp2 = p (getColumnNamesfromRTab rightRTab) unionSndPartTemp1
+        -- this join is a trick in order to change names of the rightTab
+        unionSndPart = iJ (\t1 t2 -> True) (createSingletonRTable $ createNullRTuple $ (getColumnNamesfromRTab leftRTab)) unionSndPartTemp2
+    in unionFstPart `u` unionSndPart
 
 -- | RTable Union Operator
 u = runUnion
@@ -1706,17 +1765,23 @@ runUnion rt1 rt2 =
     if isRTabEmpty rt1 && isRTabEmpty rt2
         then 
             emptyRTable
-        else  
-            -- construct the union result by concatenating the left table with the subset of tuple from the right table that do
-            -- not appear in the left table (i.e, remove dublicates)
-            rt1 V.++ (V.foldr (un) emptyRTable rt2)
-            where
-                un :: RTuple -> RTable -> RTable
-                un tupRight acc = 
-                    -- Can we find tupRight in the left table?            
-                    if didYouFindIt tupRight rt1 
-                        then acc   -- then discard tuplRight ,leave result unchanged          
-                        else V.snoc acc tupRight  -- else insert tupRight into final result
+        else
+            if isRTabEmpty rt1
+                then rt2 
+                else
+                    if isRTabEmpty rt2
+                        then rt1
+                        else  
+                            -- construct the union result by concatenating the left table with the subset of tuple from the right table that do
+                            -- not appear in the left table (i.e, remove dublicates)
+                            rt1 V.++ (V.foldr (un) emptyRTable rt2)
+                            where
+                                un :: RTuple -> RTable -> RTable
+                                un tupRight acc = 
+                                    -- Can we find tupRight in the left table?            
+                                    if didYouFindIt tupRight rt1 
+                                        then acc   -- then discard tuplRight ,leave result unchanged          
+                                        else V.snoc acc tupRight  -- else insert tupRight into final result
 
 
 
@@ -2122,6 +2187,86 @@ updateRTab ((colName, newVal) : rest) rpred inputRtab =
 
 -- * ########## RTable IO Operations ##############
 
+-- | Basic data type for defining the desired formatting of an Rtuple
+data RTupleFormat = RTupleFormat {
+    -- | For defining the column ordering (i.e., the SELECT clause in SQL)
+    colSelectList :: [ColumnName]
+    -- | For defining the formating per Column (in printf style)
+    ,colFormatMap :: ColFormatMap
+} deriving (Eq, Show)
+
+-- | A map of ColumnName to Format Specification
+type ColFormatMap = HM.HashMap ColumnName FormatSpecifier
+
+-- | Generates a default Column Format Specification
+genDefaultColFormatMap :: ColFormatMap
+genDefaultColFormatMap = HM.empty
+
+-- | Generates a Column Format Specification
+genColFormatMap :: 
+    [(ColumnName, FormatSpecifier)]
+    -> ColFormatMap
+genColFormatMap fs = HM.fromList fs
+
+
+-- | Format specifier of Text.Printf.printf style.(see https://hackage.haskell.org/package/base-4.10.1.0/docs/Text-Printf.html)
+data FormatSpecifier = DefaultFormat | Format String deriving (Eq, Show)
+
+-- | Generate an RTupleFormat data type instance
+genRTupleFormat :: 
+    [ColumnName]    -- ^ Column Select list 
+    -> ColFormatMap -- ^ Column Format Map
+    -> RTupleFormat  -- ^ Output
+genRTupleFormat colNames colfMap = RTupleFormat { colSelectList = colNames, colFormatMap = colfMap} 
+
+-- | Generate a default RTupleFormat data type instance.
+-- In this case the returned column order (Select list), will be unspecified
+-- and dependant only by the underlying structure of the RTuple (HashMap)
+genRTupleFormatDefault :: RTupleFormat
+genRTupleFormatDefault = RTupleFormat { colSelectList = [], colFormatMap = genDefaultColFormatMap }
+
+-- | prints an RTable with an RTuple format specification
+printfRTable :: RTupleFormat -> RTable -> IO()
+printfRTable rtupFmt rtab = -- undefined
+    if isRTabEmpty rtab
+        then
+            do 
+                putStrLn "-------------------------------------------"
+                putStrLn " 0 rows returned"
+                putStrLn "-------------------------------------------"
+
+        else
+            do
+                -- find the max value-length for each column, this will be the width of the box for this column
+                let listOfLengths = getMaxLengthPerColumnFmt rtupFmt rtab
+
+                --debug
+                --putStrLn $ "List of Lengths: " ++ show listOfLengths
+
+                printContLineFmt rtupFmt listOfLengths '-' rtab
+                -- print the Header
+                printRTableHeaderFmt rtupFmt listOfLengths rtab 
+
+                -- print the body
+                printRTabBodyFmt rtupFmt listOfLengths $ V.toList rtab
+
+                -- print number of rows returned
+                let numrows = V.length rtab
+                if numrows == 1
+                    then 
+                        putStrLn $ "\n"++ (show $ numrows) ++ " row returned"        
+                    else
+                        putStrLn $ "\n"++ (show $ numrows) ++ " rows returned"        
+
+                printContLineFmt rtupFmt listOfLengths '-' rtab
+                where
+                    -- [Int] a List of width per column to be used in the box definition        
+                    printRTabBodyFmt :: RTupleFormat -> [Int] -> [RTuple] -> IO()
+                    printRTabBodyFmt _ _ [] = putStrLn ""            
+                    printRTabBodyFmt rtupf ws (rtup : rest) = do
+                            printRTupleFmt rtupf ws rtup
+                            printRTabBodyFmt rtupf ws rest
+
 
 -- | printRTable : Print the input RTable on screen
 printRTable ::
@@ -2166,6 +2311,42 @@ printRTable rtab =
                     printRTabBody ws (rtup : rest) = do
                             printRTuple ws rtup
                             printRTabBody ws rest
+
+-- | Returns the max length of the String representation of each value, for each column of the input RTable. 
+-- It returns the lengths in the column order specified by the input RTupleFormat parameter
+getMaxLengthPerColumnFmt :: RTupleFormat -> RTable -> [Int]
+getMaxLengthPerColumnFmt rtupFmt rtab = 
+    let
+        -- Create an RTable where all the values of the columns will be the length of the String representations of the original values
+        lengthRTab = do
+            rtup <- rtab
+            let ls = Data.List.map (\(c, v) -> (c, RInt $ fromIntegral $ Data.List.length . rdataTypeToString $ v) ) (rtupleToList rtup)
+                -- create an RTuple with the column names lengths
+                headerLengths = Data.List.zip (getColumnNamesfromRTab rtab) (Data.List.map (\c -> RInt $ fromIntegral $ Data.List.length c) (getColumnNamesfromRTab rtab))
+            -- append  to the rtable also the tuple corresponding to the header (i.e., the values will be the names of the column) in order
+            -- to count them also in the width calculation
+            (return $ createRtuple ls) V.++ (return $ createRtuple headerLengths)
+
+        -- Get the max length for each column
+        resultRTab = findMaxLengthperColumn lengthRTab
+                where
+                    findMaxLengthperColumn :: RTable -> RTable
+                    findMaxLengthperColumn rt = 
+                        let colNames = (getColumnNamesfromRTab rt) -- [ColumnName]
+                            aggOpsList = Data.List.map (\c -> raggMax c c) colNames  -- [AggOp]
+                        in runAggregation aggOpsList rt
+         -- get the RTuple with the results
+        resultRTuple = headRTup resultRTab
+    in 
+        -- transform it to [Int]
+        if rtupFmt /= genRTupleFormatDefault
+            then
+                -- generate [Int] in the column order specified by the format parameter        
+                Data.List.map (\(RInt i) -> fromIntegral i) $ 
+                    Data.List.map (\colname -> resultRTuple <!> colname) $ colSelectList rtupFmt  -- [RInt i]
+            else
+                -- else just choose the default column order (i.e., unspecified)
+                Data.List.map (\(colname, RInt i) -> fromIntegral i) (rtupleToList resultRTuple)                
 
 -- | Returns the max length of the String representation of each value, for each column of the input RTable. 
 getMaxLengthPerColumn :: RTable -> [Int]
@@ -2245,6 +2426,26 @@ addCharacter ::
 addCharacter i c s = s ++ Data.List.take i (repeat c)    
 
 -- | helper function that prints a continuous line adjusted to the size of the input RTable
+-- The column order is specified by the input RTupleFormat parameter
+printContLineFmt ::
+       RTupleFormat -- ^ Specifies the appropriate column order
+    -> [Int]    -- ^ a List of width per column to be used in the box definition
+    -> Char     -- ^ the char with which the line will be drawn
+    -> RTable
+    -> IO ()
+printContLineFmt rtupFmt widths ch rtab = do
+    let listOfColNames =    if rtupFmt /= genRTupleFormatDefault
+                                then
+                                    colSelectList rtupFmt
+                                else
+                                    getColumnNamesfromRTab rtab -- [ColumnName] 
+        listOfLinesCont = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat ch)) listOfColNames
+        formattedLinesCont = Data.List.map (\(w,l) -> addCharacter (w - (Data.List.length l) + spaceSeparatorWidth) ch l) (Data.List.zip widths listOfLinesCont)
+        formattedRowOfLinesCont = Data.List.foldr (\line accum -> line ++ accum) "" formattedLinesCont
+    putStrLn formattedRowOfLinesCont
+
+
+-- | helper function that prints a continuous line adjusted to the size of the input RTable
 printContLine ::
        [Int]    -- ^ a List of width per column to be used in the box definition
     -> Char     -- ^ the char with which the line will be drawn
@@ -2257,7 +2458,43 @@ printContLine widths ch rtab = do
         formattedRowOfLinesCont = Data.List.foldr (\line accum -> line ++ accum) "" formattedLinesCont
     putStrLn formattedRowOfLinesCont
 
--- | printRTableHeader : Printa the input RTable's header (i.e., column names) on screen
+
+-- | Prints the input RTable's header (i.e., column names) on screen.
+-- The column order is specified by the corresponding RTupleFormat parameter.
+printRTableHeaderFmt ::
+       RTupleFormat -- ^ Specifies Column order
+    -> [Int]    -- ^ a List of width per column to be used in the box definition
+    -> RTable
+    -> IO ()
+printRTableHeaderFmt rtupFmt widths rtab = do -- undefined    
+        let listOfColNames = if rtupFmt /= genRTupleFormatDefault then colSelectList rtupFmt else  getColumnNamesfromRTab rtab -- [ColumnName]
+            -- format each column name according the input width and return a list of Boxes [Box]
+            -- formattedList =  Data.List.map (\(w,c) -> BX.para BX.left (w + spaceSeparatorWidth) c) (Data.List.zip widths listOfColNames)    -- listOfColNames   -- map (\c -> BX.render . BX.text $ c) listOfColNames
+            formattedList = Data.List.map (\(w,c) -> addSpace (w - (Data.List.length c) + spaceSeparatorWidth) c) (Data.List.zip widths listOfColNames) 
+            -- Paste all boxes together horizontally
+            -- formattedRow = BX.render $ Data.List.foldr (\colname_box accum -> accum BX.<+> colname_box) BX.nullBox formattedList
+            formattedRow = Data.List.foldr (\colname accum -> colname ++ accum) "" formattedList
+            
+            listOfLines = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat '~')) listOfColNames
+          --  listOfLinesCont = Data.List.map (\c -> Data.List.take (Data.List.length c) (repeat '-')) listOfColNames
+            --formattedLines = Data.List.map (\(w,l) -> BX.para BX.left (w +spaceSeparatorWidth) l) (Data.List.zip widths listOfLines)
+            formattedLines = Data.List.map (\(w,l) -> addSpace (w - (Data.List.length l) + spaceSeparatorWidth) l) (Data.List.zip widths listOfLines)
+          -- formattedLinesCont = Data.List.map (\(w,l) -> addCharacter (w - (Data.List.length l) + spaceSeparatorWidth) '-' l) (Data.List.zip widths listOfLinesCont)
+            -- formattedRowOfLines = BX.render $ Data.List.foldr (\line_box accum -> accum BX.<+> line_box) BX.nullBox formattedLines
+            formattedRowOfLines = Data.List.foldr (\line accum -> line ++ accum) "" formattedLines
+          ---  formattedRowOfLinesCont = Data.List.foldr (\line accum -> line ++ accum) "" formattedLinesCont
+
+      --  printUnderlines formattedRowOfLinesCont
+        printHeader formattedRow
+        printUnderlines formattedRowOfLines
+        where
+            printHeader :: String -> IO()
+            printHeader h = putStrLn h
+
+            printUnderlines :: String -> IO()
+            printUnderlines l = putStrLn l
+
+-- | printRTableHeader : Prints the input RTable's header (i.e., column names) on screen
 printRTableHeader ::
        [Int]    -- ^ a List of width per column to be used in the box definition
     -> RTable
@@ -2301,6 +2538,34 @@ printRTableHeader widths rtab = do -- undefined
                 putStr $ (Data.List.take (Data.List.length x) (repeat '~')) ++ "\t" 
                 printUnderlines xs
 -}
+
+-- | Prints an RTuple on screen (only the values of the columns)
+--  [Int] is a List of width per column to be used in the box definition        
+-- The column order as well as the formatting specifications are specified by the first parameter.
+-- We assume that the order in [Int] corresponds to that of the RTupleFormat parameter.
+printRTupleFmt :: RTupleFormat -> [Int] -> RTuple -> IO()
+printRTupleFmt rtupFmt widths rtup = do
+    -- take list of values of each column and convert to String
+    let rtupList =  if rtupFmt == genRTupleFormatDefault
+                        then -- then no column ordering is specified nore column formatting
+                            Data.List.map (rdataTypeToString . snd) (rtupleToList rtup)  -- [RDataType] --> [String]
+                        else 
+                            if (colFormatMap rtupFmt) == genDefaultColFormatMap
+                                then -- col ordering is specified but no formatting per column
+                                    Data.List.map (\colname -> rdataTypeToStringFmt DefaultFormat $ rtup <!> colname ) $ colSelectList rtupFmt
+                                else  -- both column ordering, as well as formatting per column is specified
+                                    Data.List.map (\colname -> rdataTypeToStringFmt ((colFormatMap rtupFmt) ! colname) $ rtup <!> colname ) $ colSelectList rtupFmt
+
+        -- format each column value according the input width and return a list of [Box]
+        -- formattedValueList = Data.List.map (\(w,v) -> BX.para BX.left w v) (Data.List.zip widths rtupList)
+        formattedValueList = Data.List.map (\(w,v) -> addSpace (w - (Data.List.length v) + spaceSeparatorWidth) v) (Data.List.zip widths rtupList)
+                        -- Data.List.map (\(c,r) -> BX.text . rdataTypeToString $ r) rtupList 
+                        -- Data.List.map (\(c,r) -> rdataTypeToString $ r) rtupList --  -- [String]
+        -- Paste all boxes together horizontally
+        -- formattedRow = BX.render $ Data.List.foldr (\value_box accum -> accum BX.<+> value_box) BX.nullBox formattedValueList
+        formattedRow = Data.List.foldr (\value_box accum -> value_box ++ accum) "" formattedValueList
+    putStrLn formattedRow
+
 -- | Prints an RTuple on screen (only the values of the columns)
 --  [Int] is a List of width per column to be used in the box definition        
 printRTuple :: [Int] -> RTuple -> IO()
@@ -2326,7 +2591,24 @@ printRTuple widths rtup = do
             putStr $ x ++ "\t"
             printList xs
 -}
+
+-- | Turn the value stored in a RDataType into a String in order to be able to print it wrt to the specified format
+rdataTypeToStringFmt :: FormatSpecifier -> RDataType -> String
+rdataTypeToStringFmt fmt rdt =
+    case fmt of 
+        DefaultFormat -> rdataTypeToString rdt
+        Format fspec -> 
+            case rdt of
+                RInt i -> printf fspec i
+                RText t -> printf fspec (unpack t)
+                RDate {rdate = d, dtformat = f} -> printf fspec (unpack d)
+                RTime t -> printf fspec $ unpack $ rtext (rTimeStampToRText "DD/MM/YYYY HH24:MI:SS" t)
+                -- Round to only two decimal digits after the decimal point
+                RDouble db -> printf fspec db -- show db
+                Null -> "NULL"           
+
 -- | Turn the value stored in a RDataType into a String in order to be able to print it
+-- Values are transformed with a default formatting. 
 rdataTypeToString :: RDataType -> String
 rdataTypeToString rdt =
     case rdt of

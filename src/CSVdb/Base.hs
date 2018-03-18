@@ -122,6 +122,8 @@ import Data.Either.Combinators (fromRight')
 
 import Data.Char (ord)
 
+import Text.Printf (printf)
+
 {--  
 
 -- Example code from: https://github.com/hvr/cassava  
@@ -418,7 +420,7 @@ rtableToCSV m t =
                                     RInt i                          -> CV.toField i
                                     RText t                         -> CV.toField t 
                                     RDate {rdate = d, dtformat = f} -> CV.toField d 
-                                    RDouble db                      -> CV.toField db 
+                                    RDouble db                      -> CV.toField  ((printf "%.2f" db)::String)
                                     RTime { rtime = RTimestampVal {year = y, month = m, day = d, hours24 = h, minutes = mi, seconds = s} } ->  let  timeText = (digitToText d) `mappend` T.pack "/" `mappend` (digitToText m) `mappend` T.pack "/" `mappend` (digitToText y) `mappend` T.pack " " `mappend`  (digitToText h) `mappend` T.pack ":"  `mappend` (digitToText mi) `mappend` T.pack ":" `mappend` (digitToText s) 
                                                                                                                                                               -- T.pack . removeQuotes . T.unpack $ (showText d) `mappend` T.pack "/" `mappend` (showText m) `mappend` T.pack "/" `mappend` (showText y) `mappend` T.pack " " `mappend`  (showText h) `mappend` T.pack ":"  `mappend` (showText mi) `mappend` T.pack ":" `mappend` (showText s)
                                                                                                                                                                     -- removeQuotes $ (show d) ++ "/" ++ (show m) ++ "/" ++ (show y) ++ " " ++  (show h) ++ ":" ++ (show mi) ++ ":" ++ (show s)
